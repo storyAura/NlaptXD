@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .vscode/
 .idea/
+
+# Flutter
+.dart_tool/
+build/
+.flutter-plugins-dependencies
+*.iml
+dist/
