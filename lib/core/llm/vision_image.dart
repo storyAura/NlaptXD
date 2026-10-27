@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
-import 'openai_client.dart';
+import 'llm_client.dart';
 
 /// 发给视觉模型的图,长边不超过这么多(同旧版 nlapt/llm/vision.py 的 DEFAULT_MAX_EDGE)。
 const maxImageEdge = 1024;

@@ -8,7 +8,7 @@ import 'package:flutter/foundation.dart';
 
 import 'api_profile.dart';
 import 'cleaning.dart';
-import 'openai_client.dart';
+import 'llm_client.dart';
 
 /// 翻译服务:大模型 / Google / 百度 / DeepL / DeepLX / 自定义 OpenAI 兼容,按顺序备选。
 /// 移植自旧版 NLapt 的 nlapt/llm/translate.py、web_translate.py、fallback.py。译文只用来对照或预览,
@@ -273,7 +273,7 @@ class Translator {
     if (settings.customBaseUrl.trim().isEmpty || settings.customModel.trim().isEmpty) {
       throw const TranslateConfigError('自定义翻译要填 Base URL 和模型');
     }
-    final client = OpenAiClient(
+    final client = LlmClient(
       ApiProfile(id: 'translate', name: '自定义翻译', baseUrl: settings.customBaseUrl, apiKey: settings.customKey),
       timeout: const Duration(seconds: 60),
     );

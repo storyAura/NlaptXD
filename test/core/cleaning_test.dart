@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:nlaptxd/core/llm/cleaning.dart';
-import 'package:nlaptxd/core/llm/openai_client.dart';
+import 'package:nlaptxd/core/llm/llm_client.dart';
 import 'package:nlaptxd/core/llm/vision_image.dart';
 
 void main() {

@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/llm_client.dart';
 import '../../../core/llm/translate.dart';
 import '../../core/theme.dart';
 

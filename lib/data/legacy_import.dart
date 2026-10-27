@@ -4,21 +4,21 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../core/llm/api_profile.dart';
-import '../core/llm/openai_client.dart';
+import '../core/llm/llm_client.dart';
 import '../core/llm/translate.dart';
 import 'app_config.dart';
 
 /// 旧版 NLapt 导进来的接口 id 前缀(旧版用接口名当 id)。
 const legacyIdPrefix = 'nlapt-';
 
-/// 旧版的接口地址换成 OpenAI 兼容地址;换不了的返回 null(接口照样导入,但先停用)。
-/// Anthropic 风格的地址不带 /v1,客户端自己拼 /v1/messages;OpenAI 兼容的要带(OpenRouter 就是这样)。
-String? openAiBase(String type, String url) {
+/// 旧版 api_type 对应的格式和地址。旧版的 ollama 走它自己的 /api,这里改用 Ollama 的 OpenAI 兼容地址 /v1。
+({ApiProtocol protocol, String url}) legacyEndpoint(String type, String url) {
   final u = url.trim().replaceFirst(RegExp(r'/+$'), '');
   return switch (type) {
-    'openai' => u,
-    'anthropic' => u.endsWith('/v1') ? u : '$u/v1',
-    _ => null,
+    'anthropic' => (protocol: ApiProtocol.anthropic, url: u),
+    'gemini' => (protocol: ApiProtocol.gemini, url: u),
+    'ollama' => (protocol: ApiProtocol.openai, url: u.endsWith('/v1') ? u : '$u/v1'),
+    _ => (protocol: ApiProtocol.openai, url: u),
   };
 }
 
@@ -30,8 +30,9 @@ ModelRef? _ref(Object? j) {
 }
 
 /// 导入分几步,[AppConfig.legacyImport] 记着做到了哪步:1 接口与模型位,2 全部系统提示词方案,3 HuggingFace Token,4 同时发送数,
-/// 5 翻译服务(选哪家、备选顺序、各家密钥)和当前文本模型。
-const legacyImportVersion = 5;
+/// 5 翻译服务(选哪家、备选顺序、各家密钥)和当前文本模型,
+/// 6 接口格式(早先只支持 OpenAI 兼容,Anthropic 的地址被改过、Google 的被停用;这一步还原)。
+const legacyImportVersion = 6;
 
 /// 把旧版的 api.json(接口、推标模型)、cha_annotation.json(CHA 模型位)、vision_prompts.json
 /// (系统提示词方案、推标提示词)并进 [cur]。只做还没做过的步骤;只填空位、不覆盖已有设置。
@@ -52,7 +53,25 @@ AppConfig importLegacy(
   final n = request is Map ? request['concurrency'] : null;
   if (cur.legacyImport < 4 && n is int && n > 0) c = c.copyWith(parallel: n.clamp(1, maxParallel));
   if (cur.legacyImport < 5) c = _importTranslate(c, api, translate);
+  // 第 1 步现在直接按格式导入;更早导入过的,把格式和原地址还回来。
+  if (cur.legacyImport >= 1 && cur.legacyImport < 6) c = _restoreProtocols(c, api);
   return c.copyWith(legacyImport: legacyImportVersion);
+}
+
+/// 早先导入的 Anthropic / Google 接口:还是 OpenAI 格式的(用户没动过格式),换回旧版的格式和地址并启用。
+AppConfig _restoreProtocols(AppConfig cur, Map<String, dynamic>? api) {
+  final llm = api?['llm'] is Map ? api!['llm'] as Map : const {};
+  final old = {
+    for (final p in llm['profiles'] as List? ?? const [])
+      if (p is Map && p['name'] is String) '$legacyIdPrefix${p['name']}': legacyEndpoint(p['api_type'] as String? ?? 'openai', p['base_url'] as String? ?? ''),
+  };
+  return cur.copyWith(profiles: [
+    for (final p in cur.profiles)
+      if (old[p.id] case final end? when end.protocol != ApiProtocol.openai && p.protocol == ApiProtocol.openai)
+        p.copyWith(protocol: end.protocol, baseUrl: end.url, enabled: true)
+      else
+        p,
+  ]);
 }
 
 /// 旧版 translate.json 的 provider / fallback_order(本地 Hy-MT2 还没做,跳过)+ api.json 的 translate 段密钥。
@@ -107,16 +126,16 @@ AppConfig _importApi(AppConfig cur, Map<String, dynamic>? api, Map<String, dynam
     if (p is! Map || p['name'] is! String || (p['name'] as String).isEmpty) continue;
     final id = '$legacyIdPrefix${p['name']}';
     if (have.contains(id)) continue;
-    final base = openAiBase(p['api_type'] as String? ?? 'openai', p['base_url'] as String? ?? '');
+    final end = legacyEndpoint(p['api_type'] as String? ?? 'openai', p['base_url'] as String? ?? '');
     final enabled = [for (final m in p['enabled_models'] as List? ?? const []) if (m is String && m.isNotEmpty) m];
     final picked = enabled.isNotEmpty ? enabled : {p['text_model'], p['vision_model']}.whereType<String>().where((m) => m.isNotEmpty);
     added.add(ApiProfile(
       id: id,
       name: p['name'] as String,
-      baseUrl: base ?? p['base_url'] as String? ?? '',
+      baseUrl: end.url,
       apiKey: p['api_key'] as String? ?? '',
       models: [...picked],
-      enabled: base != null,
+      protocol: end.protocol,
     ));
   }
   final cards = cha?['card_models'] as List? ?? const [];

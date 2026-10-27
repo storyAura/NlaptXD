@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/llm/api_profile.dart';
-import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/llm_client.dart';
 import '../../../core/system_prompts.dart';
 import '../../../data/app_config.dart';
 import '../../../data/config_store.dart';

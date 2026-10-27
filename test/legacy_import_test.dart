@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nlaptxd/core/llm/api_profile.dart';
-import 'package:nlaptxd/core/llm/openai_client.dart';
+import 'package:nlaptxd/core/llm/llm_client.dart';
 import 'package:nlaptxd/core/llm/translate.dart';
 import 'package:nlaptxd/data/app_config.dart';
 import 'package:nlaptxd/data/legacy_import.dart';
@@ -50,10 +50,10 @@ void main() {
     expect((c.translate.service, c.translate.fallbacks.single, c.translate.deeplxUrl), (TranslateService.deeplx, TranslateService.google, 'https://dx.example/k/translate'));
     expect(c.textModel, const ModelRef('nlapt-openrouter', 'muse'));
     expect(c.parallel, 20);
-    expect([for (final p in c.profiles) (p.name, p.baseUrl, p.models.join(','), p.enabled, p.apiKey)], [
-      ('aihubmix', 'https://aihubmix.com/v1', 'flash', true, 'sk-aihubmix'),
-      ('openrouter', 'https://openrouter.ai/api/v1', 'muse', true, 'sk-openrouter'),
-      ('vertex', 'https://aiplatform.googleapis.com/v1', 'argon', false, 'sk-vertex'),
+    expect([for (final p in c.profiles) (p.name, p.protocol, p.baseUrl, p.models.join(','), p.enabled, p.apiKey)], [
+      ('aihubmix', ApiProtocol.openai, 'https://aihubmix.com/v1', 'flash', true, 'sk-aihubmix'),
+      ('openrouter', ApiProtocol.anthropic, 'https://openrouter.ai/api', 'muse', true, 'sk-openrouter'),
+      ('vertex', ApiProtocol.gemini, 'https://aiplatform.googleapis.com/v1', 'argon', true, 'sk-vertex'),
     ]);
     expect(c.vision, const ModelRef('nlapt-aihubmix', 'flash'));
     expect(c.chaCards, [const ModelRef('nlapt-vertex', 'argon'), const ModelRef('nlapt-aihubmix', 'flash'), null]);
@@ -92,6 +92,25 @@ void main() {
     expect(c.profiles, isEmpty);
     expect(c.systemPrompts, {'中文': '你是一个图像分析系统。', 'other': 'x'});
     expect(c.systemName, '中文');
+  });
+
+  test('step 6 gives earlier imports their real format back, but leaves ones the user changed', () {
+    final cur = AppConfig(
+      legacyImport: 5,
+      profiles: const [
+        // 早先的做法:Anthropic 补 /v1 当 OpenAI 用,Google 停用。
+        ApiProfile(id: 'nlapt-openrouter', name: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k'),
+        ApiProfile(id: 'nlapt-vertex', name: 'vertex', baseUrl: 'https://aiplatform.googleapis.com/v1', apiKey: 'k', enabled: false),
+        ApiProfile(id: 'nlapt-aihubmix', name: 'mine', baseUrl: 'https://changed', apiKey: 'k', protocol: ApiProtocol.anthropic),
+      ],
+    );
+    final c = importLegacy(cur, api: _api);
+    expect([for (final p in c.profiles) (p.protocol, p.baseUrl, p.enabled)], [
+      (ApiProtocol.anthropic, 'https://openrouter.ai/api', true),
+      (ApiProtocol.gemini, 'https://aiplatform.googleapis.com/v1', true),
+      (ApiProtocol.anthropic, 'https://changed', true),
+    ]);
+    expect(c.legacyImport, legacyImportVersion);
   });
 
   test('missing files still mark the import done', () {

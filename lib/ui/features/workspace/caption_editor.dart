@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../../core/captions.dart';
 import '../../../core/dataset.dart';
-import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/llm_client.dart';
 import '../../../core/llm/translate.dart';
 import '../../../data/config_store.dart';
 import '../../core/motion.dart';

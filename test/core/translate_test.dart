@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nlaptxd/core/llm/openai_client.dart';
+import 'package:nlaptxd/core/llm/llm_client.dart';
 import 'package:nlaptxd/core/llm/translate.dart';
 
 void main() {

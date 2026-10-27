@@ -1,4 +1,4 @@
-import 'openai_client.dart';
+import 'llm_client.dart';
 
 /// 模型回答整理成干净的标注,并拦下「拒绝」类回答(不写进数据集)。
 /// 移植自旧版 NLapt 的 nlapt/llm/cleaning.py,话术表原样搬来。

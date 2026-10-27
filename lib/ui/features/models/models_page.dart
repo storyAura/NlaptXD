@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/llm/api_profile.dart';
-import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/llm_client.dart';
 import '../../../data/config_store.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
@@ -51,7 +51,7 @@ class ModelsPage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Label('API 接口 · OpenAI 兼容', trailing: Align(
+                        Label('API 接口 · OpenAI / Anthropic / Google', trailing: Align(
                           alignment: Alignment.centerRight,
                           child: NlButton(label: '添加接口', icon: Icons.add, tone: Tone.outline, onPressed: _add),
                         )),
@@ -105,9 +105,22 @@ class _ProfileCardState extends State<_ProfileCard> {
   final _model = TextEditingController();
   List<String> _fetched = const [];
   bool _showKey = false, _busy = false;
+  late ApiProtocol _protocol = widget.profile.protocol;
 
-  ApiProfile get _draft => widget.profile.copyWith(name: _name.text.trim(), baseUrl: _url.text.trim(), apiKey: _key.text.trim());
-  bool get _dirty => _draft.name != widget.profile.name || _draft.baseUrl != widget.profile.baseUrl || _draft.apiKey != widget.profile.apiKey;
+  ApiProfile get _draft =>
+      widget.profile.copyWith(name: _name.text.trim(), baseUrl: _url.text.trim(), apiKey: _key.text.trim(), protocol: _protocol);
+  bool get _dirty =>
+      _draft.name != widget.profile.name ||
+      _draft.baseUrl != widget.profile.baseUrl ||
+      _draft.apiKey != widget.profile.apiKey ||
+      _draft.protocol != widget.profile.protocol;
+
+  /// 换格式:地址还是空的或别家的默认地址时,换成这家的默认地址。
+  void _setProtocol(ApiProtocol next) => setState(() {
+    final url = _url.text.trim();
+    if (url.isEmpty || ApiProtocol.values.any((x) => x.defaultUrl == url)) _url.text = next.defaultUrl;
+    _protocol = next;
+  });
 
   @override
   void dispose() {
@@ -180,6 +193,14 @@ class _ProfileCardState extends State<_ProfileCard> {
             ],
           ),
           const SizedBox(height: 8),
+          Text('格式', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+          const SizedBox(height: 4),
+          Seg<ApiProtocol>(
+            value: _protocol,
+            onChanged: _setProtocol,
+            items: [for (final x in ApiProtocol.values) (x, x.label, null)],
+          ),
+          const SizedBox(height: 8),
           field('名称', _name),
           const SizedBox(height: 8),
           field('地址', _url),
@@ -223,7 +244,7 @@ class _ProfileCardState extends State<_ProfileCard> {
                 tone: Tone.outline,
                 busy: _busy,
                 onPressed: () => _guard(() async {
-                  final list = await OpenAiClient(_draft).listModels();
+                  final list = await LlmClient(_draft).listModels();
                   if (!mounted) return;
                   setState(() => _fetched = list);
                   _say('拉到 ${list.length} 个模型 · 勾选后可用');
@@ -238,7 +259,7 @@ class _ProfileCardState extends State<_ProfileCard> {
                 onPressed: p.models.isEmpty
                     ? null
                     : () => _guard(() async {
-                        final t = await OpenAiClient(_draft).ping(p.models.first);
+                        final t = await LlmClient(_draft).ping(p.models.first);
                         _say('连接成功(${(t.inMilliseconds / 1000).toStringAsFixed(1)} 秒)');
                       }),
               ),

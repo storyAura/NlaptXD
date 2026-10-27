@@ -10,7 +10,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/dataset.dart';
 import '../../../core/l10n.dart';
 import '../../../core/llm/api_profile.dart';
-import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/llm_client.dart';
 import '../../../core/llm/vision_image.dart';
 import '../../../core/local/caption_catalog.dart';
 import '../../../core/local/character_index.dart';
@@ -271,7 +271,7 @@ class LocalStore extends ChangeNotifier {
     _idleTimer?.cancel();
     try {
       final url = await _ensureServer(m);
-      final client = OpenAiClient(
+      final client = LlmClient(
         ApiProfile(id: localProfileId, name: '本机 llama-server', baseUrl: url, apiKey: ''),
         timeout: const Duration(minutes: 10),
       );

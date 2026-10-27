@@ -3,7 +3,7 @@ import 'dart:io';
 import '../../../core/cha.dart';
 import '../../../core/dataset.dart';
 import '../../../core/llm/api_profile.dart';
-import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/llm_client.dart';
 import '../../../core/llm/translate.dart';
 import '../../../core/llm/vision_image.dart';
 import '../../../data/app_config.dart';
@@ -25,7 +25,7 @@ VisionAsk? askerFor(ModelRef? ref, AppConfig c, LocalStore local) {
   }
   final profile = c.profileOf(ref);
   if (profile == null) return null;
-  final client = OpenAiClient(profile);
+  final client = LlmClient(profile);
   return ({required String prompt, String system = '', required List<ImagePart> images}) => client.caption(
     model: ref.model,
     prompt: prompt,
@@ -42,7 +42,7 @@ Translator translatorFor(AppConfig c) {
   final profile = c.profileOf(ref);
   return Translator(
     c.translate,
-    llm: profile == null ? null : (prompt, system) => OpenAiClient(profile).chat(model: ref!.model, prompt: prompt, system: system),
+    llm: profile == null ? null : (prompt, system) => LlmClient(profile).chat(model: ref!.model, prompt: prompt, system: system),
   );
 }
 

@@ -1,6 +1,21 @@
 import 'package:flutter/foundation.dart';
 
-/// 一个 OpenAI 兼容接口(OpenRouter、DeepSeek、硅基流动、llama-server、Ollama 的 /v1 都算)。
+/// 接口格式(同旧版 api_type):OpenAI 兼容 / Anthropic Messages / Google Gemini(含 Vertex AI)。
+enum ApiProtocol {
+  openai('OpenAI', 'https://openrouter.ai/api/v1'),
+  anthropic('Anthropic', 'https://api.anthropic.com'),
+  gemini('Google', 'https://generativelanguage.googleapis.com');
+
+  const ApiProtocol(this.label, this.defaultUrl);
+
+  final String label;
+
+  /// 新建接口时填的地址。
+  final String defaultUrl;
+}
+
+/// 一个接口:OpenAI 兼容(OpenRouter、DeepSeek、硅基流动、llama-server、Ollama 的 /v1 都算)、
+/// Anthropic 或 Google,看 [protocol]。
 @immutable
 class ApiProfile {
   const ApiProfile({
@@ -10,6 +25,7 @@ class ApiProfile {
     required this.apiKey,
     this.models = const [],
     this.enabled = true,
+    this.protocol = ApiProtocol.openai,
   });
 
   final String id;
@@ -20,8 +36,9 @@ class ApiProfile {
   /// 用户勾选进模型池的模型。
   final List<String> models;
   final bool enabled;
+  final ApiProtocol protocol;
 
-  ApiProfile copyWith({String? name, String? baseUrl, String? apiKey, List<String>? models, bool? enabled}) =>
+  ApiProfile copyWith({String? name, String? baseUrl, String? apiKey, List<String>? models, bool? enabled, ApiProtocol? protocol}) =>
       ApiProfile(
         id: id,
         name: name ?? this.name,
@@ -29,6 +46,7 @@ class ApiProfile {
         apiKey: apiKey ?? this.apiKey,
         models: models ?? this.models,
         enabled: enabled ?? this.enabled,
+        protocol: protocol ?? this.protocol,
       );
 
   Map<String, Object> toJson() => {
@@ -38,6 +56,7 @@ class ApiProfile {
     'apiKey': apiKey,
     'models': models,
     'enabled': enabled,
+    'protocol': protocol.name,
   };
 
   factory ApiProfile.fromJson(Map<String, dynamic> j) => ApiProfile(
@@ -47,6 +66,7 @@ class ApiProfile {
     apiKey: j['apiKey'] as String? ?? '',
     models: [for (final m in j['models'] as List? ?? const []) m as String],
     enabled: j['enabled'] as bool? ?? true,
+    protocol: ApiProtocol.values.asNameMap()[j['protocol']] ?? ApiProtocol.openai,
   );
 }
 
