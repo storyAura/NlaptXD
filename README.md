@@ -69,15 +69,13 @@ NLaptXD 编辑 LoRA 等训练集的自然语言标注:一张图配一个同名 `
 
 ## 快速开始
 
-### 环境要求
+### 下载
 
-- Windows 10 / 11(x64)
-- [Flutter](https://flutter.dev) 3.47 及以上(Dart 3.13 及以上),以及 Visual Studio 的「使用 C++ 的桌面开发」组件
-- PowerShell 7(`pwsh`)
+从 [Releases](https://github.com/storyAura/NlaptXD/releases) 下载 `NLaptXD-v<版本>-windows-x64.zip`,解压后运行 `NLaptXD\nlaptxd.exe`。支持 Windows 10 / 11(x64)。
 
-### 编译与运行
+### 从源码编译
 
-暂未发布安装包,需要从源码编译:
+环境要求:[Flutter](https://flutter.dev) 3.47 及以上(Dart 3.13 及以上)、Visual Studio 的「使用 C++ 的桌面开发」组件、PowerShell 7(`pwsh`)。
 
 ```powershell
 git clone https://github.com/storyAura/NlaptXD.git
@@ -131,7 +129,7 @@ tool/build.ps1     Windows 编译脚本
 
 ## 更新记录
 
-- **0.1.0-XD**:第一个公开版本,包含上面列出的全部功能。
+- **0.1.0-XD**:第一个公开版本,包含上面列出的全部功能。下载见 [Releases](https://github.com/storyAura/NlaptXD/releases)。
 
 尚未完成的功能:图像工具(替换透明底、雷同图隔离)、崩溃后恢复草稿、导出 zip、编辑训练集对照组、本地翻译模型。
 
