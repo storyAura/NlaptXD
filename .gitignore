@@ -11,3 +11,7 @@ build/
 *.iml
 dist/
 .cache/
+
+# 只留本机
+CLAUDE.md
+Design/

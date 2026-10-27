@@ -127,7 +127,6 @@ lib/
   ui/              界面:标注台、操作日志、模型、本地模型、设置
 test/              单元测试与界面冒烟测试
 prototype/         网页原型(python prototype/build.py)
-Design/            字标与宣传图源文件(promo.html)
 tool/build.ps1     Windows 编译脚本
 ```
 
