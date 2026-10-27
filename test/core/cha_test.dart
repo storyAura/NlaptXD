@@ -99,5 +99,30 @@ void main() {
       expect(assembleCaption(roster, parseReply('CARD: NONE', 2)), isNull);
       expect(() => assembleCaption(roster, parseReply('CARD: 1', 2)), throwsA(isA<ChaReplyError>()));
     });
+
+    test('VISIBLE trims the card to what this image shows; ALL keeps the full card', () {
+      const trimmed = 'Aoba from New Game! has purple hair in long twintails. She wears a white shirt.';
+      final v = parseReply('CARD: 1\nOUTFIT 1: SAME\nVISIBLE 1: $trimmed\n\nA close-up of her face.', 2);
+      expect(v.visible, [trimmed]);
+      expect(assembleCaption(roster, v), '$trimmed\n\nA close-up of her face.');
+      final all = parseReply('CARD: 1\nOUTFIT 1: SAME\nVISIBLE 1: ALL\n\nShe stands.', 2);
+      expect(all.visible, [null]);
+      expect(assembleCaption(roster, all), '$_card\n\nShe stands.');
+    });
+
+    test('a VISIBLE line that loses the name, is a stub, or grows longer falls back to the full card', () {
+      for (final bad in [
+        'She has purple hair in long twintails and purple eyes, wearing a white shirt.',
+        'Aoba from New Game!',
+        'Aoba from New Game! has purple hair. ${'She also wears a long red cape with golden trim. ' * 4}',
+      ]) {
+        final out = assembleCaption(roster, parseReply('CARD: 1\nVISIBLE 1: $bad\n\nShe sits.', 2));
+        expect(out, '$_card\n\nShe sits.', reason: bad);
+      }
+    });
+  });
+
+  test('scene prompt asks for the visibility check', () {
+    expect(buildScenePrompt([card('Aoba')]), contains('VISIBLE <card number>: ALL'));
   });
 }

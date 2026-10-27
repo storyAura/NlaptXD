@@ -69,7 +69,7 @@ class _InferTabState extends State<InferTab> {
   Future<void> _runCha() async {
     final cfg = widget.config.config;
     final list = ws.scopeEntries(_scope);
-    final roster = await showChaDialog(context, config: cfg, local: widget.local, images: list);
+    final roster = await showChaDialog(context, config: cfg, local: widget.local, images: list, root: ws.root);
     if (roster == null || !mounted) return;
     final ask = askerFor(cfg.chaScene ?? cfg.vision, cfg, widget.local);
     if (ask == null) return _say('整批画面模型不可用 · 去「模型」页设置', warn: true);

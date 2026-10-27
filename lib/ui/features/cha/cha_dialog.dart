@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/cha.dart';
+import '../../../core/cha_store.dart';
 import '../../../core/local/character_index.dart';
 import '../../../core/dataset.dart';
 import '../../../data/app_config.dart';
@@ -17,15 +18,17 @@ import '../workspace/gloss_pane.dart';
 export 'cha_summary.dart';
 
 /// CHA 向导:角色卡 → 三套人物卡候选 → 确认。确认后返回锁定的人物卡,取消返回 null。
+/// 给了 [root](数据集)时,确认的角色卡存进它的 .nlapt,下次打开可以直接复用。
 Future<List<ChaCard>?> showChaDialog(
   BuildContext context, {
   required AppConfig config,
   required LocalStore local,
   required List<ImageEntry> images,
+  Directory? root,
 }) => showDialog<List<ChaCard>>(
   context: context,
   barrierDismissible: false,
-  builder: (_) => _ChaDialog(config: config, local: local, images: images),
+  builder: (_) => _ChaDialog(config: config, local: local, images: images, root: root),
 );
 
 enum _Status { idle, busy, done, error }
@@ -34,7 +37,11 @@ enum _Status { idle, busy, done, error }
 class _Slot {
   final name = TextEditingController();
   final series = TextEditingController();
-  int ref = 0;
+
+  /// 主参考图的路径;空 = 网格里的第一张。
+  String ref = '';
+
+  /// 部件参考(背面、武器、发饰特写……):路径空 = 还没选图。
   final extras = <({String path, TextEditingController label})>[];
   final cands = List.generate(3, (_) => TextEditingController());
   final status = List.filled(3, _Status.idle);
@@ -52,11 +59,12 @@ class _Slot {
 }
 
 class _ChaDialog extends StatefulWidget {
-  const _ChaDialog({required this.config, required this.local, required this.images});
+  const _ChaDialog({required this.config, required this.local, required this.images, this.root});
 
   final AppConfig config;
   final LocalStore local;
   final List<ImageEntry> images;
+  final Directory? root;
 
   @override
   State<_ChaDialog> createState() => _ChaDialogState();
@@ -68,9 +76,76 @@ class _ChaDialogState extends State<_ChaDialog> {
   int _step = 1;
 
   _Slot get _slot => _slots[_cur];
-  List<ImageEntry> get _refs => widget.images.take(40).toList();
+
+  /// 右边网格里能点的图:推标范围的前 60 张;复用上次的卡时,它用过的图补在前面。
+  late final List<String> _grid = [for (final e in widget.images.take(60)) e.imagePath];
+
+  String _refOf(_Slot s) => s.ref.isNotEmpty ? s.ref : _grid.firstOrNull ?? '';
+
+  /// 正在为当前卡的第几个部件选图(点右边网格就填进去);null = 网格选的是主参考图。
+  int? _picking;
+
+  /// 这个数据集上次确认的角色卡(可以复用);null = 没有或已经关掉提示。
+  ({DateTime time, List<SavedCard> cards})? _saved;
 
   bool _identifying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final root = widget.root;
+    if (root != null) {
+      loadChaCards(root).then((saved) {
+        if (mounted) setState(() => _saved = saved);
+      });
+    }
+  }
+
+  /// 复用上次的角色卡:填回角色名、作品名、参考图、部件和锁定的人物卡,直接到确认页。
+  void _reuse() {
+    final saved = _saved!;
+    setState(() {
+      for (final s in _slots) {
+        s.dispose();
+      }
+      _slots
+        ..clear()
+        ..addAll([
+          for (final c in saved.cards)
+            _Slot()
+              ..name.text = c.name
+              ..series.text = c.series
+              ..ref = c.ref
+              ..extras.addAll([for (final r in c.references) (path: r.path, label: TextEditingController(text: r.label))])
+              ..cands[0].text = c.text
+              ..status[0] = _Status.done
+              ..pick = 0,
+        ]);
+      for (final p in {for (final c in saved.cards) ...[c.ref, for (final r in c.references) r.path]}) {
+        if (p.isNotEmpty && !_grid.contains(p)) _grid.insert(0, p);
+      }
+      _cur = 0;
+      _picking = null;
+      _saved = null;
+      _step = 3;
+    });
+  }
+
+  /// 确认时存档(失败只记日志:CHA 照常进行)。
+  void _save() {
+    final root = widget.root;
+    if (root == null) return;
+    saveChaCards(root, [
+      for (final s in _slots)
+        (
+          name: s.name.text.trim(),
+          series: s.series.text.trim(),
+          text: s.cands[s.pick].text.trim(),
+          ref: _refOf(s),
+          references: [for (final e in s.extras) if (e.path.isNotEmpty) (path: e.path, label: e.label.text.trim())],
+        ),
+    ]).catchError((Object e) => debugPrint('cha_cards.json 写入失败:$e'));
+  }
 
   @override
   void dispose() {
@@ -86,7 +161,7 @@ class _ChaDialogState extends State<_ChaDialog> {
   Future<void> _identify(_Slot s) async {
     setState(() => _identifying = true);
     try {
-      s.found = await widget.local.identify(_refs[s.ref].imagePath);
+      s.found = await widget.local.identify(_refOf(s));
     } on Object catch (e) {
       if (mounted) showToast(context, '识别失败:$e', warn: true);
     }
@@ -178,12 +253,13 @@ class _ChaDialogState extends State<_ChaDialog> {
       s.status[v] = _Status.busy;
       () async {
         try {
+          final parts = [for (final e in s.extras) if (e.path.isNotEmpty) e];
           final images = [
-            await readImage(_refs[s.ref].imagePath),
-            for (final e in s.extras) await readImage(e.path),
+            await readImage(_refOf(s)),
+            for (final e in parts) await readImage(e.path),
           ];
           final text = await ask(
-            prompt: buildCardPrompt(s.name.text, s.series.text, variant: v, referenceLabels: [for (final e in s.extras) e.label.text]),
+            prompt: buildCardPrompt(s.name.text, s.series.text, variant: v, referenceLabels: [for (final e in parts) e.label.text]),
             images: images,
           );
           s.cands[v].text = text.trim();
@@ -198,16 +274,30 @@ class _ChaDialogState extends State<_ChaDialog> {
     setState(() {});
   }
 
-  Future<void> _addExtras() async {
-    final files = await openFiles(acceptedTypeGroups: const [
+  /// 「添加部件」:加一行,接着在右边网格点一张图给它。
+  void _addPart() => setState(() {
+    _slot.extras.add((path: '', label: TextEditingController()));
+    _picking = _slot.extras.length - 1;
+  });
+
+  void _setPart(int i, String path) => setState(() {
+    final s = _slot;
+    s.extras[i] = (path: path, label: s.extras[i].label);
+    _picking = null;
+  });
+
+  /// 不在数据集里的图(官方设定图之类)从文件选。
+  Future<void> _partFromFile(int i) async {
+    final f = await openFile(acceptedTypeGroups: const [
       XTypeGroup(label: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp']),
     ]);
-    setState(() {
-      for (final f in files) {
-        _slot.extras.add((path: f.path, label: TextEditingController()));
-      }
-    });
+    if (f != null && mounted) _setPart(i, f.path);
   }
+
+  void _removePart(int i) => setState(() {
+    _slot.extras.removeAt(i).label.dispose();
+    _picking = null;
+  });
 
   void _next() {
     if (_step == 1) {
@@ -218,10 +308,12 @@ class _ChaDialogState extends State<_ChaDialog> {
     } else if (_step == 2) {
       setState(() => _step = 3);
     } else {
+      _save();
       Navigator.pop(context, [
         for (final s in _slots)
           ChaCard.fromText(s.name.text, s.series.text, s.cands[s.pick].text, [
-            for (final e in s.extras) (path: e.path, label: e.label.text),
+            for (final e in s.extras)
+              if (e.path.isNotEmpty) (path: e.path, label: e.label.text),
           ]),
       ]);
     }
@@ -311,17 +403,22 @@ class _ChaDialogState extends State<_ChaDialog> {
           NlChip(
             label: s.name.text.trim().isEmpty ? '卡 ${i + 1}' : '卡 ${i + 1} · ${s.name.text.trim()}',
             selected: i == _cur,
-            onTap: () => setState(() => _cur = i),
+            onTap: () => setState(() {
+              _cur = i;
+              _picking = null;
+            }),
           ),
         if (_step == 1 && _slots.length < maxCards)
           NlButton(label: '添加角色卡', icon: Icons.add, tone: Tone.ghost, onPressed: () => setState(() {
             _slots.add(_Slot());
             _cur = _slots.length - 1;
+            _picking = null;
           })),
         if (_step == 1 && _slots.length > 1)
           NlButton(label: '删除此卡', icon: Icons.delete_outline, tone: Tone.danger, onPressed: () => setState(() {
             _slots.removeAt(_cur).dispose();
             _cur = (_cur - 1).clamp(0, _slots.length - 1);
+            _picking = null;
           })),
       ],
     ),
@@ -350,26 +447,14 @@ class _ChaDialogState extends State<_ChaDialog> {
               const SizedBox(height: 14),
               field('作品名', s.series, '如 New Game!'),
               const SizedBox(height: 22),
-              Text('多图参考', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+              Text('部件参考', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
               const SizedBox(height: 2),
-              Text('背面、武器、发饰特写…', style: TextStyle(fontSize: 11, color: NlColors.slate400)),
+              Text('背面、武器、发饰特写… 加一个部件,在右边点图', style: TextStyle(fontSize: 11, color: NlColors.slate400)),
               const SizedBox(height: 8),
-              for (final (i, e) in s.extras.indexed)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: Image.file(File(e.path), width: 36, height: 36, fit: BoxFit.cover, cacheWidth: 96),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(child: TextField(controller: e.label, style: const TextStyle(fontSize: 12.5), decoration: fieldDecoration('部位名称'))),
-                    NlIconButton(Icons.close, onPressed: () => setState(() => s.extras.removeAt(i).label.dispose())),
-                  ]),
-                ),
+              for (final (i, e) in s.extras.indexed) _partRow(i, e),
               Align(
                 alignment: Alignment.centerLeft,
-                child: NlButton(label: '添加参考图', icon: Icons.add_photo_alternate_outlined, tone: Tone.outline, onPressed: _addExtras),
+                child: NlButton(label: '添加部件', icon: Icons.add, tone: Tone.outline, onPressed: _addPart),
               ),
             ],
           ),
@@ -377,39 +462,171 @@ class _ChaDialogState extends State<_ChaDialog> {
         const SizedBox(width: 24),
         Expanded(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Label('主参考图', trailing: Text('点一张代表这个角色', style: TextStyle(fontSize: 11, color: NlColors.slate400))),
-              Expanded(
-                child: GridView.builder(
-                  // 留边:选中图外圈的光晕不被网格边缘切掉。
-                  padding: const EdgeInsets.all(4),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 124, childAspectRatio: 3 / 4, mainAxisSpacing: 12, crossAxisSpacing: 12),
-                  itemCount: _refs.length,
-                  itemBuilder: (_, i) => GestureDetector(
-                    onTap: () => setState(() => s.ref = i),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: AnimatedContainer(
-                        duration: Motion.base,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: s.ref == i ? NlColors.primary : Colors.transparent, width: 2),
-                          boxShadow: s.ref == i ? [BoxShadow(color: NlColors.primaryBg, spreadRadius: 3)] : null,
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.file(File(_refs[i].imagePath), fit: BoxFit.cover, cacheWidth: 220),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+              if (_saved case final saved?) _reuseBanner(saved),
+              _gridHeader(),
+              Expanded(child: _refGrid(s)),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  /// 「这个数据集上次的角色卡」:复用就不用再生成。
+  Widget _reuseBanner(({DateTime time, List<SavedCard> cards}) saved) {
+    final t = saved.time;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return PopIn(
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+        decoration: BoxDecoration(
+          color: NlColors.primaryBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: NlColors.primaryBorder),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.history, size: 16, color: NlColors.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '上次的角色卡 · ${saved.cards.map((c) => c.name).join('、')} · ${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, color: NlColors.primary),
+              ),
+            ),
+            NlButton(label: '复用', icon: Icons.replay, tone: Tone.primary, onPressed: _reuse),
+            NlIconButton(Icons.close, tooltip: '这次不用', onPressed: () => setState(() => _saved = null)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _gridHeader() {
+    final p = _picking;
+    if (p == null || p >= _slot.extras.length) {
+      return Label('主参考图', trailing: Text('点一张代表这个角色', style: TextStyle(fontSize: 11, color: NlColors.slate400)));
+    }
+    final label = _slot.extras[p].label.text.trim();
+    return Label(
+      '为部件 ${p + 1}${label.isEmpty ? '' : '「$label」'}选一张图',
+      trailing: Align(
+        alignment: Alignment.centerRight,
+        child: NlButton(label: '取消', tone: Tone.ghost, onPressed: () => setState(() => _picking = null)),
+      ),
+    );
+  }
+
+  /// 点图:在给部件选图时填给那个部件,否则设成主参考图。主参考图描蓝边,部件用到的图标上序号。
+  Widget _refGrid(_Slot s) {
+    final picking = _picking != null && _picking! < s.extras.length;
+    final main = _refOf(s);
+    return GridView.builder(
+      // 留边:选中图外圈的光晕不被网格边缘切掉。
+      padding: const EdgeInsets.all(4),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 124, childAspectRatio: 3 / 4, mainAxisSpacing: 12, crossAxisSpacing: 12),
+      itemCount: _grid.length,
+      itemBuilder: (_, i) {
+        final path = _grid[i];
+        final isMain = path == main;
+        final parts = [for (final (k, e) in s.extras.indexed) if (e.path == path) k + 1];
+        return GestureDetector(
+          onTap: () => picking ? _setPart(_picking!, path) : setState(() => s.ref = path),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: AnimatedContainer(
+              duration: Motion.base,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: isMain ? NlColors.primary : parts.isNotEmpty ? NlColors.accent : Colors.transparent, width: 2),
+                boxShadow: isMain ? [BoxShadow(color: NlColors.primaryBg, spreadRadius: 3)] : null,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.file(File(path), fit: BoxFit.cover, cacheWidth: 220),
+                    // 给部件选图时,图上淡淡蒙一层主色,提示「现在点是给部件的」。
+                    AnimatedOpacity(
+                      opacity: picking ? .12 : 0,
+                      duration: Motion.base,
+                      child: ColoredBox(color: NlColors.primary),
+                    ),
+                    if (isMain || parts.isNotEmpty)
+                      Positioned(
+                        left: 4,
+                        bottom: 4,
+                        child: Wrap(spacing: 3, children: [
+                          if (isMain) _badge('主', NlColors.primary),
+                          for (final n in parts) _badge('部件 $n', NlColors.accent),
+                        ]),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _badge(String text, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)),
+    child: Text(text, style: const TextStyle(fontSize: 10.5, color: Colors.white, fontWeight: FontWeight.w600)),
+  );
+
+  /// 一个部件:缩略图(点它重新在右边选)、这张拍的是什么、从文件选、删掉。
+  Widget _partRow(int i, ({String path, TextEditingController label}) e) {
+    final active = _picking == i;
+    return AnimatedContainer(
+      duration: Motion.base,
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: active ? NlColors.primaryBg : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: active ? NlColors.primaryBorder : Colors.transparent),
+      ),
+      child: Row(children: [
+        Tooltip(
+          message: '在右边点一张图',
+          child: GestureDetector(
+            onTap: () => setState(() => _picking = active ? null : i),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: e.path.isEmpty
+                    ? Container(
+                        width: 40,
+                        height: 40,
+                        color: NlColors.slate100,
+                        child: Icon(Icons.touch_app_outlined, size: 18, color: active ? NlColors.primary : NlColors.slate400),
+                      )
+                    : Image.file(File(e.path), width: 40, height: 40, fit: BoxFit.cover, cacheWidth: 96),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: TextField(
+            controller: e.label,
+            style: const TextStyle(fontSize: 12.5),
+            onChanged: (_) => setState(() {}),
+            decoration: fieldDecoration('拍的是什么,如 背面 / 武器'),
+          ),
+        ),
+        NlIconButton(Icons.folder_open_outlined, tooltip: '从文件选', onPressed: () => _partFromFile(i)),
+        NlIconButton(Icons.close, tooltip: '删掉这个部件', onPressed: () => _removePart(i)),
+      ]),
     );
   }
 
