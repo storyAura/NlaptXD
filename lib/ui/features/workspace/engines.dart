@@ -1,7 +1,10 @@
 import 'dart:io';
 
+import 'package:image/image.dart' as img;
+
 import '../../../core/cha.dart';
 import '../../../core/dataset.dart';
+import '../../../core/json_caption.dart';
 import '../../../core/llm/api_profile.dart';
 import '../../../core/llm/llm_client.dart';
 import '../../../core/llm/translate.dart';
@@ -56,6 +59,17 @@ CaptionFn? llmCaptioner(AppConfig c, LocalStore local) {
   if (ask == null) return null;
   return (ImageEntry e) async => ask(prompt: c.prompt, system: c.system, images: [await readImage(e.imagePath)]);
 }
+
+/// JSON 标注:视觉模型看图回草稿 JSON,按原图宽高换成 [format] 的官方 JSON。
+CaptionFn jsonCaptioner(JsonFormat format, VisionAsk ask) => (ImageEntry e) async {
+  final bytes = await File(e.imagePath).readAsBytes();
+  final info = img.findDecoderForData(bytes)?.startDecode(bytes);
+  if (info == null) throw const LlmError('读不出图片尺寸');
+  final (prompt, parse) = switch (format) {
+    JsonFormat.moss => (mossPrompt, mossLayoutFromReply),
+  };
+  return parse(await ask(prompt: prompt, images: [await prepareImage(bytes, imageMime(e.imagePath))]), info.width, info.height);
+};
 
 /// CHA 逐张推标:一次请求同时判定属于哪几张卡、核对服装、写画面段。
 /// [counts] 累计每张卡匹配到几张图(给结束时的汇总用)。

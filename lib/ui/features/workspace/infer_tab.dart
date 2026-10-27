@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/json_caption.dart';
 import '../../../core/llm/api_profile.dart';
 import '../../../core/local/florence.dart';
 import '../../../data/config_store.dart';
@@ -13,7 +14,7 @@ import 'engines.dart';
 import 'side_panel.dart';
 import 'workspace.dart';
 
-enum Engine { llm, local, cha, compare }
+enum Engine { llm, local, cha, json, compare }
 
 /// 推标:先选引擎,再选范围。单张结果先预览(红绿对比),批量直接写盘并可整批回滚。
 class InferTab extends StatefulWidget {
@@ -34,6 +35,7 @@ class _InferTabState extends State<InferTab> {
   Engine _engine = Engine.llm;
   Scope _scope = Scope.current;
   bool _confirm = false;
+  JsonFormat _jsonFormat = JsonFormat.moss;
 
   static const _missingLocal = '先在「模型」页下载并选一个本地模型';
 
@@ -45,7 +47,13 @@ class _InferTabState extends State<InferTab> {
     final cfg = widget.config.config;
     if (_engine == Engine.cha) return _runCha();
     final local = _engine == Engine.local;
-    final run = local ? widget.local.captioner(prompt: cfg.prompt, system: cfg.system) : llmCaptioner(cfg, widget.local);
+    final json = _engine == Engine.json;
+    final ask = json ? askerFor(cfg.vision, cfg, widget.local) : null;
+    final run = local
+        ? widget.local.captioner(prompt: cfg.prompt, system: cfg.system)
+        : json
+        ? (ask == null ? null : jsonCaptioner(_jsonFormat, ask))
+        : llmCaptioner(cfg, widget.local);
     final missing = local ? _missingLocal : '还没有视觉模型 · 去「模型」页添加';
     if (_scope == Scope.current) {
       final err = await ws.inferCurrent(run, local ? widget.local.picked?.name ?? '本地' : modelLabel(cfg.vision, widget.local), missing: missing);
@@ -56,7 +64,9 @@ class _InferTabState extends State<InferTab> {
     if (over > 0 && !_confirm) return setState(() => _confirm = true);
     setState(() => _confirm = false);
     // ponytail: 本地模型一次只推一张(Florence 只有一个会话,llama-server 没开多槽);要提速给 llama-server 加 --parallel。
-    final err = await ws.startBatch(_scope, run, title: local ? '本地推标' : 'LLM 推标', missing: missing, parallel: local ? 1 : cfg.parallel);
+    final title = local ? '本地推标' : json ? 'JSON标注 · ${_jsonFormat.label}' : 'LLM 推标';
+    final one = local || cfg.vision?.profileId == localProfileId;
+    final err = await ws.startBatch(_scope, run, title: title, missing: missing, parallel: one ? 1 : cfg.parallel);
     _report(err);
   }
 
@@ -95,6 +105,7 @@ class _InferTabState extends State<InferTab> {
     final runLabel = switch (_engine) {
       _ when ws.busy => '推理中…',
       Engine.cha => 'CHA标注 · $n 张',
+      Engine.json => _scope == Scope.current ? 'JSON标注当前图片' : 'JSON标注 $n 张',
       _ => _scope == Scope.current ? '推标当前图片' : '推标 $n 张',
     };
     return ListView(
@@ -104,11 +115,15 @@ class _InferTabState extends State<InferTab> {
         Seg<Engine>(
           expand: true,
           value: _engine,
-          onChanged: (e) => setState(() {
-            _engine = e;
-            _confirm = false;
-          }),
-          items: const [(Engine.llm, 'LLM', null), (Engine.local, '本地', null), (Engine.cha, 'CHA', null), (Engine.compare, '多对比', null)],
+          onChanged: (e) {
+            setState(() {
+              _engine = e;
+              _confirm = false;
+            });
+            // 推出来的是 JSON,编辑区跟着切到 JSON 视图(预览图上画框)。
+            if (e == Engine.json) ws.setView(mode: EditMode.json);
+          },
+          items: const [(Engine.llm, 'LLM', null), (Engine.local, '本地', null), (Engine.cha, 'CHA', null), (Engine.json, 'JSON', null), (Engine.compare, '多对比', null)],
         ),
         const SizedBox(height: 12),
         AnimatedSize(
@@ -123,6 +138,7 @@ class _InferTabState extends State<InferTab> {
                 Engine.llm => _llmPanel(cfg.vision),
                 Engine.local => _LocalPanel(local: widget.local, prompt: cfg.prompt, onGoModels: widget.onGoModels),
                 Engine.cha => _chaPanel(),
+                Engine.json => _jsonPanel(),
                 Engine.compare => NlCard(
                   child: Row(children: [
                     Icon(Icons.schedule, size: 15, color: NlColors.slate500),
@@ -169,7 +185,11 @@ class _InferTabState extends State<InferTab> {
                       expand: true,
                       tone: Tone.primary,
                       busy: ws.busy,
-                      icon: _engine == Engine.cha ? Icons.groups_outlined : Icons.play_arrow_rounded,
+                      icon: switch (_engine) {
+                        Engine.cha => Icons.groups_outlined,
+                        Engine.json => Icons.data_object,
+                        _ => Icons.play_arrow_rounded,
+                      },
                       label: runLabel,
                       onPressed: _engine == Engine.compare || ws.job != null || n == 0 ? null : _run,
                     ),
@@ -198,19 +218,39 @@ class _InferTabState extends State<InferTab> {
     );
   }
 
+  Widget _visionRow(ModelRef? vision) {
+    final ready = askerFor(vision, widget.config.config, widget.local) != null;
+    return Row(
+      children: [
+        Expanded(child: _ModelPill(label: modelLabel(vision, widget.local), onTap: _pickVision)),
+        const SizedBox(width: 8),
+        ready ? const Pill('就绪', tone: PillTone.ok) : const Pill('未配置', tone: PillTone.warn),
+      ],
+    );
+  }
+
+  /// 「JSON」引擎:当前视觉模型看图,回成所选格式的结构化 JSON。
+  Widget _jsonPanel() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _visionRow(widget.config.config.vision),
+      const SizedBox(height: 10),
+      const Label('格式'),
+      Wrap(spacing: 6, runSpacing: 6, children: [
+        for (final f in JsonFormat.values)
+          NlChip(label: f.label, selected: _jsonFormat == f, onTap: () => setState(() => _jsonFormat = f)),
+      ]),
+      const SizedBox(height: 6),
+      Text('布局 JSON · 区域框 + 英文描述', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+    ],
+  );
+
   Widget _llmPanel(ModelRef? vision) {
     final cfg = widget.config.config;
-    final ready = askerFor(vision, cfg, widget.local) != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Expanded(child: _ModelPill(label: modelLabel(vision, widget.local), onTap: _pickVision)),
-            const SizedBox(width: 8),
-            ready ? const Pill('就绪', tone: PillTone.ok) : const Pill('未配置', tone: PillTone.warn),
-          ],
-        ),
+        _visionRow(vision),
         const SizedBox(height: 10),
         Label('提示词', trailing: Text('「模型」页可改', style: TextStyle(fontSize: 11, color: NlColors.slate400))),
         Text(cfg.prompt, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: NlColors.slate700, height: 1.5)),

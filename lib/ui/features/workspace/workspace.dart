@@ -16,7 +16,7 @@ import '../../../core/text_ops.dart';
 part 'workspace_batch.dart';
 part 'workspace_infer.dart';
 
-enum EditMode { chips, sentences, text }
+enum EditMode { chips, sentences, text, json }
 
 enum ListFilter { all, unlabeled, unsaved }
 
@@ -53,6 +53,9 @@ class Workspace extends ChangeNotifier {
   ListFilter filter = ListFilter.all;
   EditMode mode = EditMode.chips;
   bool grid = false;
+
+  /// JSON 视图里选中的框(编辑区的卡片和预览图上的框同步),-1 是没选。
+  int box = -1;
   final collapsed = <String>{};
 
   // 推标(workspace_infer.dart)
@@ -176,7 +179,10 @@ class Workspace extends ChangeNotifier {
     } else {
       _anchor = i;
     }
-    if (current != i) pending = null;
+    if (current != i) {
+      pending = null;
+      box = -1;
+    }
     current = i;
     notifyListeners();
   }
@@ -217,6 +223,11 @@ class Workspace extends ChangeNotifier {
     this.grid = grid ?? this.grid;
     this.mode = mode ?? this.mode;
     this.query = query ?? this.query;
+    notifyListeners();
+  }
+
+  void selectBox(int i) {
+    box = i;
     notifyListeners();
   }
 

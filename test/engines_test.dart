@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:nlaptxd/core/cha.dart';
 import 'package:nlaptxd/core/dataset.dart';
+import 'package:nlaptxd/core/json_caption.dart';
 import 'package:nlaptxd/core/llm/api_profile.dart';
 import 'package:nlaptxd/core/local/caption_catalog.dart';
 import 'package:nlaptxd/data/app_config.dart';
@@ -48,6 +51,17 @@ void main() {
       final run = chaCaptioner(roster, ({required prompt, system = '', required images}) async => 'CARD: NONE', {});
       expect(await run(image('b.png')), isNull);
     });
+  });
+
+  test('jsonCaptioner: MOSS prompt, bbox scaled by the original image size', () async {
+    File('${tmp.path}/w.png').writeAsBytesSync(img.encodePng(img.Image(width: 200, height: 100)));
+    final entry = ImageEntry(imagePath: '${tmp.path}/w.png', txtPath: '${tmp.path}/w.txt', folder: '');
+    final run = jsonCaptioner(JsonFormat.moss, ({required prompt, system = '', required images}) async {
+      expect(prompt, mossPrompt);
+      return '{"summary": {"caption": "A cat."}, "items": [{"label": "object", "caption": "A cat.", "bbox": [0, 0, 500, 1000]}]}';
+    });
+    final j = jsonDecode((await run(entry))!) as Map;
+    expect((j['items'] as List).single['bbox'], [-50, -100, 50, 0]);
   });
 
   group('LocalStore', () {

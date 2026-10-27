@@ -14,6 +14,7 @@ import '../../core/widgets.dart';
 import 'diff_card.dart';
 import 'engines.dart';
 import 'gloss_pane.dart';
+import 'json_editor.dart';
 import 'workspace.dart';
 
 /// kohya 文件夹 `10_aoba` 的触发词 `aoba`;正则集 `1_reg` 没有。
@@ -24,7 +25,7 @@ String triggerOf(ImageEntry e) {
   return parts[1];
 }
 
-/// 中栏下半:胶囊 / 分句 / 文本三种看法,改的是同一份标注。
+/// 中栏下半:胶囊 / 分句 / 文本 / JSON 四种看法,改的是同一份标注。
 class CaptionEditor extends StatefulWidget {
   const CaptionEditor({super.key, required this.ws, required this.config});
 
@@ -200,6 +201,7 @@ class _CaptionEditorState extends State<CaptionEditor> {
                       EditMode.chips => _chips(e, segs),
                       EditMode.sentences => _sentences(segs),
                       EditMode.text => _freeText(),
+                      EditMode.json => JsonEditor(ws: ws),
                     },
                   ),
                 ),
@@ -237,7 +239,7 @@ class _CaptionEditorState extends State<CaptionEditor> {
             setState(() => _sel = _editing = -1);
             ws.setView(mode: m);
           },
-          items: const [(EditMode.chips, '胶囊', null), (EditMode.sentences, '分句', null), (EditMode.text, '文本', null)],
+          items: const [(EditMode.chips, '胶囊', null), (EditMode.sentences, '分句', null), (EditMode.text, '文本', null), (EditMode.json, 'JSON', null)],
         ),
         const SizedBox(width: 10),
         Text('${text.length} 字符 · $n 段', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),

@@ -304,7 +304,8 @@ class Seg<T> extends StatelessWidget {
           onTap: onChanged == null ? null : () => onChanged!(it.$1),
           child: AnimatedContainer(
             duration: Motion.snap,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            // 等宽时字本来就居中,左右少留点,窄侧栏放得下五段。
+            padding: EdgeInsets.symmetric(horizontal: expand ? 4 : 10, vertical: 5),
             decoration: BoxDecoration(
               color: on && !expand ? NlColors.card : Colors.transparent,
               borderRadius: BorderRadius.circular(6),

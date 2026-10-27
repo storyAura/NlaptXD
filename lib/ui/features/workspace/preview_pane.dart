@@ -4,9 +4,11 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../../core/dataset.dart';
+import '../../../core/json_caption.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
+import 'json_editor.dart';
 import 'workspace.dart';
 
 /// 宽、高、字节数。只读文件头(ImageDescriptor),不整张解码。
@@ -28,6 +30,18 @@ class PreviewPane extends StatelessWidget {
   const PreviewPane({super.key, required this.ws});
 
   final Workspace ws;
+
+  /// JSON 视图时,标注是 MOSS 布局就在图上画框(原图宽高读文件头)。
+  Widget? _boxes(ImageEntry e) {
+    final layout = ws.mode == EditMode.json ? readMossLayout(ws.textOf(e)) : null;
+    if (layout == null) return null;
+    return FutureBuilder(
+      future: _meta(e.imagePath),
+      builder: (_, s) => s.data == null
+          ? const SizedBox.shrink()
+          : JsonBoxOverlay(layout: layout, width: s.data!.$1, height: s.data!.$2, selected: ws.box, onTap: ws.selectBox),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -92,7 +106,7 @@ class PreviewPane extends StatelessWidget {
               ),
               child: multi
                   ? _Compare(key: const ValueKey('compare'), ws: ws)
-                  : _Viewer(key: ValueKey(e.imagePath), entry: e),
+                  : _Viewer(key: ValueKey(e.imagePath), entry: e, overlay: _boxes(e)),
             ),
           ),
         ),
@@ -102,9 +116,12 @@ class PreviewPane extends StatelessWidget {
 }
 
 class _Viewer extends StatefulWidget {
-  const _Viewer({super.key, required this.entry});
+  const _Viewer({super.key, required this.entry, this.overlay});
 
   final ImageEntry entry;
+
+  /// 叠在图上、和图一样大(JSON 视图的框)。
+  final Widget? overlay;
 
   @override
   State<_Viewer> createState() => _ViewerState();
@@ -157,11 +174,16 @@ class _ViewerState extends State<_Viewer> with SingleTickerProviderStateMixin {
                   child: Center(
                     child: DecoratedBox(
                       decoration: BoxDecoration(boxShadow: [BoxShadow(color: NlColors.shadow, blurRadius: 24, offset: const Offset(0, 12))]),
-                      child: Image.file(
-                        File(widget.entry.imagePath),
-                        fit: BoxFit.contain,
-                        cacheWidth: 2048,
-                        errorBuilder: (_, _, _) => Text('无法读取图片', style: TextStyle(color: NlColors.slate500)),
+                      child: Stack(
+                        children: [
+                          Image.file(
+                            File(widget.entry.imagePath),
+                            fit: BoxFit.contain,
+                            cacheWidth: 2048,
+                            errorBuilder: (_, _, _) => Text('无法读取图片', style: TextStyle(color: NlColors.slate500)),
+                          ),
+                          if (widget.overlay != null) Positioned.fill(child: widget.overlay!),
+                        ],
                       ),
                     ),
                   ),
