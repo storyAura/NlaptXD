@@ -1,7 +1,7 @@
 name: nlaptxd
 description: "NLapt 标注台:图片 + 同名 .txt 训练集的自然语言标注编辑器"
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.1.0-XD+1
 
 environment:
   sdk: ^3.13.2

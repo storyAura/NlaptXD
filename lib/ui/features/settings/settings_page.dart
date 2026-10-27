@@ -66,7 +66,7 @@ class SettingsPage extends StatelessWidget {
                         PopIn(
                           delay: const Duration(milliseconds: 40),
                           child: section(Icons.info_outline, '关于', [
-                            row('版本', const Text('NLaptXD 0.1.0 · 原型', style: text)),
+                            row('版本', const Text('NLaptXD 0.1.0-XD', style: text)),
                           ]),
                         ),
                       ],
