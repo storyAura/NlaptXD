@@ -319,7 +319,7 @@ class Seg<T> extends StatelessWidget {
                 if (it.$2.isNotEmpty)
                   AnimatedDefaultTextStyle(
                     duration: Motion.snap,
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color, fontFamily: latinFont),
+                    style: uiFont.copyWith(fontSize: 12, fontWeight: FontWeight.w600, color: color),
                     child: Text(it.$2),
                   ),
               ],

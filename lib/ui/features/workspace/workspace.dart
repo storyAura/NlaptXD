@@ -19,15 +19,14 @@ enum ListFilter { all, unlabeled, unsaved }
 
 enum Scope { current, folder, selected, unlabeled, all }
 
-/// 看一张图、返回标注。返回 null 的工厂表示还没配好模型。
-typedef CaptionFn = Future<String> Function(ImageEntry entry);
+/// 看一张图、返回标注;返回 null 表示这张跳过不写(CHA 判定不属于任何角色卡)。
+typedef CaptionFn = Future<String?> Function(ImageEntry entry);
 
 /// 标注台的状态:打开的数据集、每张图的标注(内存里的 / 磁盘上的)、历史、选择、批量与推标。
 /// 标注只在保存或批量操作时写盘;批量操作先打 zip 快照并记进操作日志。
 class Workspace extends ChangeNotifier {
-  Workspace({required this.captioner, this.onRootChanged});
+  Workspace({this.onRootChanged});
 
-  final CaptionFn? Function() captioner;
   final void Function(String root)? onRootChanged;
 
   Directory? root;

@@ -140,12 +140,15 @@ const latinFont = 'Maple Mono';
 const cjkFont = 'LXGW 975 Yuan SC';
 const _fallback = [latinFont, cjkFont, 'Microsoft YaHei UI'];
 
+/// 整个 UI 的字体(带中文后备)。下拉框、AnimatedDefaultTextStyle 这类会整个替换文字样式的地方,
+/// 用它 `copyWith`,只写 `fontFamily` 的话中文会掉回系统字体(踩过)。
+const uiFont = TextStyle(fontFamily: latinFont, fontFamilyFallback: _fallback);
+
 /// 标注正文:等宽,行距宽一点。
 TextStyle get monoStyle => TextStyle(fontSize: 12.5, height: 1.6, color: NlColors.slate700);
 
 ThemeData nlTheme() {
   final dark = NlColors.isDark;
-  const font = TextStyle(fontFamily: latinFont, fontFamilyFallback: _fallback);
   final scheme = ColorScheme.fromSeed(
     seedColor: NlColors.primary,
     brightness: dark ? Brightness.dark : Brightness.light,
@@ -179,7 +182,7 @@ ThemeData nlTheme() {
       waitDuration: const Duration(milliseconds: 400),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(color: NlColors.toast, borderRadius: BorderRadius.circular(6)),
-      textStyle: font.copyWith(fontSize: 11.5, color: Colors.white),
+      textStyle: uiFont.copyWith(fontSize: 11.5, color: Colors.white),
     ),
     dialogTheme: DialogThemeData(
       backgroundColor: NlColors.card,

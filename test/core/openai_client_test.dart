@@ -56,6 +56,26 @@ void main() {
     expect(content.last['image_url']['url'], 'data:image/png;base64,AQID');
   });
 
+  test('extra reference images follow the main image in order', () async {
+    reply = {
+      'choices': [
+        {'message': {'content': 'ok'}},
+      ],
+    };
+    await OpenAiClient(profile()).caption(
+      model: 'm',
+      prompt: 'p',
+      image: [1],
+      mime: 'image/png',
+      extra: [(bytes: [2], mime: 'image/jpeg')],
+    );
+    final content = (lastBody['messages'] as List).last['content'] as List;
+    expect(content.map((c) => c['image_url']?['url']).whereType<String>(), [
+      'data:image/png;base64,AQ==',
+      'data:image/jpeg;base64,Ag==',
+    ]);
+  });
+
   test('content given as parts is joined', () async {
     reply = {
       'choices': [

@@ -6,12 +6,15 @@ import '../../../data/config_store.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
+import '../local/local_store.dart';
+import '../workspace/engines.dart';
 
-/// 模型:左边接口卡片,右边「用途」(推标用哪个视觉模型、提示词)。
+/// 模型:左边接口卡片,右边「用途」(推标、CHA 各用哪个模型,提示词)。
 class ModelsPage extends StatelessWidget {
-  const ModelsPage({super.key, required this.config});
+  const ModelsPage({super.key, required this.config, required this.local});
 
   final ConfigStore config;
+  final LocalStore local;
 
   void _add() {
     final cfg = config.config;
@@ -24,7 +27,7 @@ class ModelsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: config,
+    listenable: Listenable.merge([config, local]),
     builder: (context, _) {
       final cfg = config.config;
       return Column(
@@ -63,7 +66,7 @@ class ModelsPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 18),
-                  Expanded(child: _Usage(config: config)),
+                  Expanded(child: _Usage(config: config, local: local)),
                 ],
               ),
             ),
@@ -253,9 +256,10 @@ class _ProfileCardState extends State<_ProfileCard> {
 }
 
 class _Usage extends StatefulWidget {
-  const _Usage({required this.config});
+  const _Usage({required this.config, required this.local});
 
   final ConfigStore config;
+  final LocalStore local;
 
   @override
   State<_Usage> createState() => _UsageState();
@@ -288,11 +292,13 @@ class _UsageState extends State<_Usage> {
               Text('视觉 · 推标', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
               const SizedBox(height: 6),
               DropdownButtonFormField<ModelRef>(
+                // 换了 key 才会按新值重建(FormField 只在创建时读 initialValue)。
+                key: ValueKey('vision/${cfg.vision?.profileId}/${cfg.vision?.model}'),
                 initialValue: cfg.pool.contains(cfg.vision) ? cfg.vision : null,
                 isExpanded: true,
                 hint: Text(cfg.pool.isEmpty ? '先在左边添加接口并勾选模型' : '选择模型', style: const TextStyle(fontSize: 12.5)),
                 decoration: fieldDecoration(''),
-                style: TextStyle(fontSize: 12.5, color: NlColors.text, fontFamily: latinFont),
+                style: uiFont.copyWith(fontSize: 12.5, color: NlColors.text),
                 items: [
                   for (final r in cfg.pool)
                     DropdownMenuItem(value: r, child: Text('${names[r.profileId]} · ${r.model}', overflow: TextOverflow.ellipsis)),
@@ -334,15 +340,65 @@ class _UsageState extends State<_Usage> {
         ),
         const SizedBox(height: 12),
         NlCard(
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(Icons.memory_outlined, size: 16, color: NlColors.slate500),
-              const SizedBox(width: 8),
-              Expanded(child: Text('本地推理(llama.cpp / Florence-2)、CHA、多对比 · 下一阶段', style: TextStyle(fontSize: 12.5, color: NlColors.slate500))),
+              Text('CHA标注 · 留空沿用视觉模型', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+              for (var i = 0; i < 3; i++)
+                _slot('候选 ${i + 1}', cfg.chaCards[i], (r) {
+                  final cards = [...cfg.chaCards]..[i] = r;
+                  widget.config.update(cfg.copyWith(chaCards: cards));
+                }),
+              _slot('整批画面', cfg.chaScene, (r) => widget.config.update(cfg.copyWith(chaScene: (r,)))),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  /// 一个 CHA 模型位:沿用视觉模型 / 模型池里任一个 / 本地 GGUF 模型。
+  Widget _slot(String label, ModelRef? value, ValueChanged<ModelRef?> onChanged) {
+    final cfg = widget.config.config;
+    final names = {for (final p in cfg.profiles) p.id: p.name};
+    final local = widget.local.picked;
+    final options = <ModelRef?>[
+      null,
+      ...cfg.pool,
+      if (local != null && !local.florence && widget.local.installed(local)) const ModelRef(localProfileId, ''),
+    ];
+    final current = options.contains(value) ? value : null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          SizedBox(width: 72, child: Text(label, style: TextStyle(fontSize: 12, color: NlColors.slate500))),
+          Expanded(
+            child: DropdownButtonFormField<ModelRef?>(
+              key: ValueKey('$label/${current?.profileId}/${current?.model}'),
+              initialValue: current,
+              isExpanded: true,
+              decoration: fieldDecoration(''),
+              style: uiFont.copyWith(fontSize: 12.5, color: NlColors.text),
+              items: [
+                for (final r in options)
+                  DropdownMenuItem(
+                    value: r,
+                    child: Text(
+                      r == null
+                          ? '沿用视觉模型'
+                          : r.profileId == localProfileId
+                          ? modelLabel(r, widget.local)
+                          : '${names[r.profileId]} · ${r.model}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

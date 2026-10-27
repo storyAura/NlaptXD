@@ -18,8 +18,12 @@ class InferJob {
   final List<ImageEntry> list;
   final started = DateTime.now();
   final changes = <ImageEntry, String>{};
+
+  /// 推标函数返回 null 的图(CHA:不属于任何角色卡),没写。
+  final skipped = <ImageEntry>[];
+  final failedEntries = <ImageEntry>[];
   int done = 0;
-  int failed = 0;
+  int get failed => failedEntries.length;
   String? lastError;
   bool cancelled = false;
   bool hidden = false;
@@ -39,17 +43,18 @@ class InferJob {
 }
 
 extension WorkspaceInfer on Workspace {
-  /// 推理当前图,结果放进 [pending] 等用户采纳。没配模型时返回错误文案。
-  Future<String?> inferCurrent(String modelName) async {
+  /// 用 [run] 推理当前图,结果放进 [pending] 等用户采纳。[run] 为 null(没配好模型)时返回 [missing]。
+  Future<String?> inferCurrent(CaptionFn? run, String modelName, {String missing = '还没有视觉模型 · 去「模型」页添加'}) async {
     final e = entry;
-    final run = captioner();
     if (e == null) return null;
-    if (run == null) return '还没有视觉模型 · 去「模型」页添加';
+    if (run == null) return missing;
     busy = true;
     pending = null;
     changed();
     try {
-      pending = PendingResult(e.key, await run(e), modelName);
+      final text = await run(e);
+      if (text == null) return '模型判定这张图不需要写';
+      pending = PendingResult(e.key, text, modelName);
       return null;
     } on Object catch (err) {
       return '推理失败:$err';
@@ -63,7 +68,7 @@ extension WorkspaceInfer on Workspace {
     final p = pending;
     if (p == null) return;
     pending = null;
-    if (entry?.key == p.key) setText(p.text, label: '推理(LLM)');
+    if (entry?.key == p.key) setText(p.text, label: '推理 · ${p.model}');
   }
 
   void rejectPending() {
@@ -71,26 +76,36 @@ extension WorkspaceInfer on Workspace {
     changed();
   }
 
-  /// 批量推标:先打快照,逐张写盘(拒绝 / 出错的那张保留原文),结束后记一条操作日志。
-  Future<String?> startBatch(Scope scope) async {
-    final run = captioner();
-    if (run == null) return '还没有视觉模型 · 去「模型」页添加';
+  /// 批量推标:先打快照,逐张写盘(拒绝 / 出错的那张保留原文;[run] 返回 null 的跳过),
+  /// 结束后记一条操作日志。[list] 给了就用它,否则按 [scope] 取。
+  Future<String?> startBatch(
+    Scope scope,
+    CaptionFn? run, {
+    String title = 'LLM 推标',
+    List<ImageEntry>? list,
+    String missing = '还没有视觉模型 · 去「模型」页添加',
+  }) async {
+    if (run == null) return missing;
     if (job != null || root == null) return null;
-    final list = scopeEntries(scope);
-    if (list.isEmpty) return '范围内没有图片';
-    final j = job = InferJob('LLM 推标', list);
+    final items = list ?? scopeEntries(scope);
+    if (items.isEmpty) return '范围内没有图片';
+    final j = job = InferJob(title, items);
     changed();
     final zip = await snapshotCaptions(root!, j.title);
-    final before = {for (final e in list) e.key: _saved[e.key] ?? ''};
-    for (final e in list) {
+    final before = {for (final e in items) e.key: _saved[e.key] ?? ''};
+    for (final e in items) {
       if (j.cancelled) break;
       try {
         final text = await run(e);
-        await writeAtomic(e.txtPath, text);
-        j.changes[e] = text;
-        _commitWritten(e, text, j.title);
+        if (text == null) {
+          j.skipped.add(e);
+        } else {
+          await writeAtomic(e.txtPath, text);
+          j.changes[e] = text;
+          _commitWritten(e, text, j.title);
+        }
       } on Object catch (err) {
-        j.failed++;
+        j.failedEntries.add(e);
         j.lastError = '$err';
       }
       j.done++;
@@ -101,7 +116,10 @@ extension WorkspaceInfer on Workspace {
         OpRecord(
           id: oplog!.nextId,
           title: j.title,
-          detail: j.cancelled ? '已取消 · 完成 ${j.done}/${list.length}' : '成功 ${j.changes.length} · 失败 ${j.failed}',
+          detail: [
+            if (j.cancelled) '已取消 · 完成 ${j.done}/${items.length}' else '成功 ${j.changes.length} · 失败 ${j.failed}',
+            if (j.skipped.isNotEmpty) '跳过 ${j.skipped.length}',
+          ].join(' · '),
           time: DateTime.now(),
           backup: zip,
           status: j.cancelled ? OpStatus.partial : OpStatus.done,

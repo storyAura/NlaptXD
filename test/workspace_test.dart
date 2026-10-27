@@ -19,7 +19,7 @@ void main() {
       if (cap.isNotEmpty) File('${root.path}/${rel.replaceAll('.png', '.txt')}').writeAsStringSync(cap);
     }
     fake = (ImageEntry e) async => e.name == '2.png' ? throw Exception('refused') : 'new ${e.name}';
-    ws = Workspace(captioner: () => fake);
+    ws = Workspace();
     await ws.open(root);
   });
   tearDown(() => root.delete(recursive: true));
@@ -65,7 +65,7 @@ void main() {
   });
 
   test('batch inference keeps the original when a model call fails', () async {
-    await ws.startBatch(Scope.all);
+    await ws.startBatch(Scope.all, fake);
     expect(txt('a/1.txt'), 'new 1.png');
     expect(txt('a/2.txt'), 'violet hair');
     expect(ws.lastJob!.failed, 1);
@@ -73,15 +73,21 @@ void main() {
   });
 
   test('single inference waits for accept before changing the caption', () async {
-    expect(await ws.inferCurrent('fake'), isNull);
+    expect(await ws.inferCurrent(fake, 'fake'), isNull);
     expect(ws.textOf(ws.entry!), 'violet hair, solo');
     ws.acceptPending();
     expect(ws.textOf(ws.entry!), 'new 1.png');
     expect(ws.isDirty(ws.entry!), isTrue);
   });
 
+  test('a captioner returning null skips the image: nothing written, counted as skipped', () async {
+    await ws.startBatch(Scope.all, (e) async => e.name == '1.png' ? null : 'x');
+    expect(txt('a/1.txt'), 'violet hair, solo');
+    expect(ws.lastJob!.skipped.map((e) => e.name), ['1.png']);
+    expect(ws.oplog!.records.single.detail, contains('跳过 1'));
+  });
+
   test('without a vision model inference explains what to do', () async {
-    fake = null;
-    expect(await ws.inferCurrent('x'), contains('模型'));
+    expect(await ws.inferCurrent(null, 'x'), contains('模型'));
   });
 }

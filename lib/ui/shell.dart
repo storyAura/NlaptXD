@@ -5,18 +5,21 @@ import 'core/look_switcher.dart';
 import 'core/motion.dart';
 import 'core/theme.dart';
 import 'core/widgets.dart';
+import 'features/local/local_page.dart';
+import 'features/local/local_store.dart';
 import 'features/log/log_page.dart';
 import 'features/models/models_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/workspace/workspace.dart';
 import 'features/workspace/workspace_page.dart';
 
-/// 左侧 48px 导航轨 + 四页。各页常驻(切页不丢输入),切换时淡入并轻轻上移。
+/// 左侧 48px 导航轨 + 五页。各页常驻(切页不丢输入),切换时淡入并轻轻上移。
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.ws, required this.config});
+  const AppShell({super.key, required this.ws, required this.config, required this.local});
 
   final Workspace ws;
   final ConfigStore config;
+  final LocalStore local;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -29,6 +32,7 @@ class _AppShellState extends State<AppShell> {
     (Icons.space_dashboard_outlined, '标注台'),
     (Icons.history, '操作日志'),
     (Icons.hub_outlined, '模型'),
+    (Icons.download_for_offline_outlined, '本地模型'),
     (Icons.settings_outlined, '设置'),
   ];
 
@@ -37,9 +41,10 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      WorkspacePage(ws: widget.ws, config: widget.config, onGo: _go),
+      WorkspacePage(ws: widget.ws, config: widget.config, local: widget.local, onGo: _go),
       LogPage(ws: widget.ws),
-      ModelsPage(config: widget.config),
+      ModelsPage(config: widget.config, local: widget.local),
+      LocalPage(local: widget.local),
       SettingsPage(config: widget.config),
     ];
     return Scaffold(
@@ -76,16 +81,18 @@ class _AppShellState extends State<AppShell> {
                   Positioned.fill(
                     child: IgnorePointer(
                       ignoring: i != _page,
-                      child: TickerMode(
-                        enabled: i == _page,
-                        child: AnimatedOpacity(
-                          opacity: i == _page ? 1 : 0,
-                          duration: Motion.of(context, Motion.base),
-                          curve: Motion.swift,
-                          child: AnimatedSlide(
-                            offset: i == _page ? Offset.zero : const Offset(0, .015),
-                            duration: Motion.of(context, Motion.sheet),
-                            curve: Motion.enter,
+                      // 淡出 / 上移放在 TickerMode 外面:包在里面的话,离开的那页一被暂停,
+                      // 淡出就卡在不透明,底下的页会透出来(踩过)。
+                      child: AnimatedOpacity(
+                        opacity: i == _page ? 1 : 0,
+                        duration: Motion.of(context, Motion.base),
+                        curve: Motion.swift,
+                        child: AnimatedSlide(
+                          offset: i == _page ? Offset.zero : const Offset(0, .015),
+                          duration: Motion.of(context, Motion.sheet),
+                          curve: Motion.enter,
+                          child: TickerMode(
+                            enabled: i == _page,
                             child: ExcludeFocus(excluding: i != _page, child: page),
                           ),
                         ),

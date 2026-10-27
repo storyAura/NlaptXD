@@ -9,6 +9,9 @@ const defaultVisionPrompt =
     'Describe this image in a detailed, objective natural language paragraph '
     'suitable for image-generation training. Reply with the caption text only.';
 
+/// 随请求发出的一张图。
+typedef ImagePart = ({List<int> bytes, String mime});
+
 /// 接口出错。[message] 直接给用户看:短、中文、不带堆栈。
 class LlmError implements Exception {
   const LlmError(this.message);
@@ -31,12 +34,14 @@ class OpenAiClient {
     return Uri.parse('$base$path');
   }
 
+  /// 看图回答。[extra] 是跟在主图后面的参考图(CHA 的多图参考),按顺序是 Image 2、3…
   Future<String> caption({
     required String model,
     required String prompt,
     required List<int> image,
     required String mime,
     String system = '',
+    List<ImagePart> extra = const [],
   }) async {
     final body = {
       'model': model,
@@ -46,10 +51,11 @@ class OpenAiClient {
           'role': 'user',
           'content': [
             {'type': 'text', 'text': prompt},
-            {
-              'type': 'image_url',
-              'image_url': {'url': 'data:$mime;base64,${base64Encode(image)}'},
-            },
+            for (final (bytes, type) in [(image, mime), for (final e in extra) (e.bytes, e.mime)])
+              {
+                'type': 'image_url',
+                'image_url': {'url': 'data:$type;base64,${base64Encode(bytes)}'},
+              },
           ],
         },
       ],

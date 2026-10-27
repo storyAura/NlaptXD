@@ -32,6 +32,16 @@ class _CaptionEditorState extends State<CaptionEditor> {
   Workspace get ws => widget.ws;
   final _portal = OverlayPortalController();
   final _link = LayerLink();
+  final _bodyKey = GlobalKey();
+  final _chipKey = GlobalKey();
+
+  /// 选中的胶囊离编辑区顶边太近(放上面会盖住标题栏)时,工具条翻到下方。
+  bool _chipNearTop() {
+    final chip = _chipKey.currentContext?.findRenderObject() as RenderBox?;
+    final body = _bodyKey.currentContext?.findRenderObject() as RenderBox?;
+    if (chip == null || body == null || !chip.attached || !body.attached) return true;
+    return chip.localToGlobal(Offset.zero).dy - body.localToGlobal(Offset.zero).dy < 46;
+  }
   final _text = TextEditingController();
   final _textFocus = FocusNode();
   int _sel = -1;
@@ -98,22 +108,26 @@ class _CaptionEditorState extends State<CaptionEditor> {
     if (!_textFocus.hasFocus && _text.text != text) _text.text = text;
     final segs = splitSegments(text);
     if (_sel >= segs.length) _sel = -1;
+    // 工具条画在最上层的 Overlay 里,不跟着页面淡出:标注台不是当前页时(TickerMode 关着)不画。
+    final pageActive = TickerMode.valuesOf(context).enabled;
 
     return OverlayPortal(
       controller: _portal,
-      overlayChildBuilder: (_) => _sel < 0 || _editing >= 0 || ws.mode != EditMode.chips
-          ? const SizedBox.shrink()
-          : Align(
-              alignment: Alignment.topLeft,
-              child: CompositedTransformFollower(
-                link: _link,
-                showWhenUnlinked: false,
-                targetAnchor: Alignment.topLeft,
-                followerAnchor: Alignment.bottomLeft,
-                offset: const Offset(0, -6),
-                child: PopIn(key: ValueKey('$_key/$_sel'), child: _toolbar(segs.length)),
-              ),
-            ),
+      overlayChildBuilder: (_) {
+        if (!pageActive || _sel < 0 || _editing >= 0 || ws.mode != EditMode.chips) return const SizedBox.shrink();
+        final below = _chipNearTop();
+        return Align(
+          alignment: Alignment.topLeft,
+          child: CompositedTransformFollower(
+            link: _link,
+            showWhenUnlinked: false,
+            targetAnchor: below ? Alignment.bottomLeft : Alignment.topLeft,
+            followerAnchor: below ? Alignment.topLeft : Alignment.bottomLeft,
+            offset: Offset(0, below ? 6 : -6),
+            child: PopIn(key: ValueKey('$_key/$_sel/$below'), child: _toolbar(segs.length)),
+          ),
+        );
+      },
       child: Container(
         color: NlColors.card,
         child: Column(
@@ -121,6 +135,7 @@ class _CaptionEditorState extends State<CaptionEditor> {
             _header(text, segs.length),
             Expanded(
               child: Container(
+                key: _bodyKey,
                 color: NlColors.editorBg,
                 child: AnimatedSwitcher(
                   duration: Motion.of(context, Motion.base),
@@ -233,6 +248,7 @@ class _CaptionEditorState extends State<CaptionEditor> {
                   selected: i == _sel,
                   lock: i == 0 && s == trigger,
                   link: i == _sel ? _link : null,
+                  anchorKey: i == _sel ? _chipKey : null,
                   onTap: () => _select(i),
                   onDelete: () => _delete(i),
                   // 往右拖落在目标之后,往左拖落在目标之前:两种都是插到 i
@@ -314,6 +330,7 @@ class _Tag extends StatelessWidget {
     required this.selected,
     required this.lock,
     required this.link,
+    required this.anchorKey,
     required this.onTap,
     required this.onDelete,
     required this.onDrop,
@@ -324,6 +341,9 @@ class _Tag extends StatelessWidget {
   final bool selected;
   final bool lock;
   final LayerLink? link;
+
+  /// 选中时挂上,用来量胶囊离编辑区顶边多远。
+  final GlobalKey? anchorKey;
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final ValueChanged<int> onDrop;
@@ -388,7 +408,7 @@ class _Tag extends StatelessWidget {
         ),
       ),
     );
-    if (link != null) chip = CompositedTransformTarget(link: link!, child: chip);
+    if (link != null) chip = KeyedSubtree(key: anchorKey, child: CompositedTransformTarget(link: link!, child: chip));
     return isSentence(text) ? SizedBox(width: double.infinity, child: Align(alignment: Alignment.centerLeft, child: chip)) : chip;
   }
 }

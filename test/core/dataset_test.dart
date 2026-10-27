@@ -51,6 +51,13 @@ void main() {
     expect(missing.text, '');
   });
 
+  test('concurrent writeAtomic calls to one path do not collide on a shared temp file', () async {
+    final path = '${root.path}/same.txt';
+    await Future.wait([for (var i = 0; i < 8; i++) writeAtomic(path, 'v$i')]);
+    expect(File(path).readAsStringSync(), matches(RegExp(r'^v\d$')));
+    expect(root.listSync().where((e) => e.path.contains('tmp')), isEmpty);
+  });
+
   test('writeAtomic replaces the file and leaves no temp behind', () async {
     final path = '${root.path}/c.txt';
     await writeAtomic(path, 'one');

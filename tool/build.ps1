@@ -12,7 +12,38 @@ if (Test-Path "$drive\") { throw "$drive 盘符已被占用,改脚本里的 `$dr
 subst $drive (Split-Path $root -Parent)
 try {
   Push-Location "$drive\$(Split-Path $root -Leaf)"
+  flutter pub get | Out-Null
+  # flutter_onnxruntime(Florence-2 用)在 CMake 里从 GitHub 下载 ONNX Runtime、不检查成败,网络不稳就编不过。
+  # 压缩包缓存在 .cache\(只下一次;本机有 Penna 的缓存就直接拿来),编译前先解到插件要找的位置(同 Penna)。
+  $ortCmake = 'windows\flutter\ephemeral\.plugin_symlinks\flutter_onnxruntime\windows\CMakeLists.txt'
+  $ortMatch = if (Test-Path $ortCmake) { Select-String -Path $ortCmake -Pattern 'set\(ONNXRUNTIME_VERSION "([^"]+)"\)' }
+  $ortDir = 'build\windows\x64\plugins\flutter_onnxruntime\onnxruntime'
+  if ($ortMatch -and -not (Get-ChildItem $ortDir -Recurse -Filter onnxruntime.dll -ErrorAction SilentlyContinue)) {
+    $ver = $ortMatch.Matches[0].Groups[1].Value
+    $ortName = "onnxruntime-win-x64-$ver"
+    $ortZip = Join-Path $root ".cache\$ortName.zip"
+    try {
+      if (-not (Test-Path $ortZip)) {
+        New-Item -ItemType Directory -Force (Split-Path $ortZip) | Out-Null
+        $penna = Join-Path (Split-Path $root -Parent) "Penna\dist\cache\$ortName.zip"
+        if (Test-Path $penna) {
+          Copy-Item $penna $ortZip
+        } else {
+          "下载 $ortName(只下这一次,之后用 .cache 里的)"
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$ver/$ortName.zip" -OutFile "$ortZip.part"
+          Move-Item "$ortZip.part" $ortZip -Force
+        }
+      }
+      New-Item -ItemType Directory -Force $ortDir | Out-Null
+      Expand-Archive $ortZip -DestinationPath $ortDir -Force
+    } catch {
+      "onnxruntime 预备失败,交给插件自己下载:$($_.Exception.Message)"
+      Remove-Item "$ortZip.part", $ortZip -Force -ErrorAction SilentlyContinue
+    }
+  }
   flutter build windows "--$Mode"
+  # 插件的 CMake 第一次常报 "ONNX Runtime extraction directory doesn't exist",再编一次就好(Penna 踩过)。
+  if ($LASTEXITCODE -ne 0) { flutter build windows "--$Mode" }
   if ($LASTEXITCODE -ne 0) { throw "flutter build 失败(退出码 $LASTEXITCODE)" }
 } finally {
   Pop-Location

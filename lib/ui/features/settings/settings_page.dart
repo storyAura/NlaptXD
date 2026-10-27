@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/backups.dart';
 import '../../../data/config_store.dart';
 import '../../core/look_switcher.dart';
 import '../../core/theme.dart';
@@ -66,16 +65,6 @@ class SettingsPage extends StatelessWidget {
                         const SizedBox(height: 12),
                         PopIn(
                           delay: const Duration(milliseconds: 40),
-                          child: section(Icons.shield_outlined, '数据', [
-                            row('写入', const Text('只在保存时写 txt · 原子写入', style: text)),
-                            row('批量备份', const Text('.backups/ · 保留 $defaultKeep 份', style: text)),
-                            row('操作日志', const Text('.nlapt/oplog.json', style: text)),
-                            row('设置位置', SelectableText(config.home.path, style: text)),
-                          ]),
-                        ),
-                        const SizedBox(height: 12),
-                        PopIn(
-                          delay: const Duration(milliseconds: 80),
                           child: section(Icons.info_outline, '关于', [
                             row('版本', const Text('NLaptXD 0.1.0 · 原型', style: text)),
                           ]),

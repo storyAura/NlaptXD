@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../data/config_store.dart';
+import '../local/local_store.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
 import 'caption_editor.dart';
 import 'dataset_pane.dart';
+import 'engines.dart';
 import 'job_card.dart';
 import 'preview_pane.dart';
 import 'side_panel.dart';
@@ -28,10 +30,11 @@ Future<void> pickDataset(BuildContext context, Workspace ws) async {
 
 /// 标注台:数据集 | 预览 + 标注 | 推标侧栏;没打开数据集时是欢迎页。
 class WorkspacePage extends StatefulWidget {
-  const WorkspacePage({super.key, required this.ws, required this.config, required this.onGo});
+  const WorkspacePage({super.key, required this.ws, required this.config, required this.local, required this.onGo});
 
   final Workspace ws;
   final ConfigStore config;
+  final LocalStore local;
 
   /// 切到别的页(1 = 操作日志,2 = 模型)。
   final ValueChanged<int> onGo;
@@ -59,7 +62,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   Future<void> _inferAt(int i) async {
     ws.select(i);
-    final err = await ws.inferCurrent(widget.config.config.vision?.model ?? '');
+    final cfg = widget.config.config;
+    final err = await ws.inferCurrent(llmCaptioner(cfg, widget.local), modelLabel(cfg.vision, widget.local));
     if (err != null && mounted) showToast(context, err, warn: true);
   }
 
@@ -80,7 +84,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     child: Focus(
       autofocus: true,
       child: ListenableBuilder(
-        listenable: Listenable.merge([ws, widget.config]),
+        listenable: Listenable.merge([ws, widget.config, widget.local]),
         builder: (context, _) => AnimatedSwitcher(
           duration: Motion.of(context, Motion.sheet),
           layoutBuilder: fillLayout,
@@ -168,7 +172,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             width: 360,
             child: DecoratedBox(
               decoration: BoxDecoration(border: Border(left: BorderSide(color: NlColors.border))),
-              child: SidePanel(ws: ws, config: widget.config, onGoModels: () => widget.onGo(2), onGoLog: () => widget.onGo(1)),
+              child: SidePanel(ws: ws, config: widget.config, local: widget.local, onGoModels: () => widget.onGo(2), onGoLog: () => widget.onGo(1)),
             ),
           ),
         ],

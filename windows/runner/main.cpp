@@ -38,6 +38,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     ::DispatchMessage(&msg);
   }
 
+  // window_manager's destroy() only posts WM_QUIT, so the window is still alive
+  // here. Destroy it now (OnDestroy releases the Flutter controller first);
+  // otherwise ~FlutterWindow tears the controller down while the top-level
+  // window still routes messages into it, which crashes and hangs on exit
+  // (flutter_windows.dll+0x1e220). Same fix as Penna's runner/main.cpp.
+  window.Destroy();
+
   ::CoUninitialize();
   return EXIT_SUCCESS;
 }

@@ -5,14 +5,16 @@ import 'data/config_store.dart';
 import 'ui/core/look_switcher.dart';
 import 'ui/core/theme.dart';
 import 'ui/core/widgets.dart';
+import 'ui/features/local/local_store.dart';
 import 'ui/features/workspace/workspace.dart';
 import 'ui/shell.dart';
 
 class NlaptApp extends StatelessWidget {
-  const NlaptApp({super.key, required this.config, required this.ws, this.windowChrome = true});
+  const NlaptApp({super.key, required this.config, required this.ws, required this.local, this.windowChrome = true});
 
   final ConfigStore config;
   final Workspace ws;
+  final LocalStore local;
 
   /// 测试里没有原生窗口,不画自绘标题栏。
   final bool windowChrome;
@@ -46,6 +48,6 @@ class NlaptApp extends StatelessWidget {
         ),
       ),
     ),
-    home: AppShell(ws: ws, config: config),
+    home: AppShell(ws: ws, config: config, local: local),
   );
 }

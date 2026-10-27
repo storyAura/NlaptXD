@@ -1,0 +1,416 @@
+import 'package:flutter/material.dart';
+
+import '../../../core/captions.dart';
+import '../../../core/llm/api_profile.dart';
+import '../../../core/local/florence.dart';
+import '../../../data/config_store.dart';
+import '../../core/motion.dart';
+import '../../core/theme.dart';
+import '../../core/widgets.dart';
+import '../cha/cha_dialog.dart';
+import '../local/local_store.dart';
+import 'engines.dart';
+import 'side_panel.dart';
+import 'workspace.dart';
+
+enum Engine { llm, local, cha, compare }
+
+/// 推标:先选引擎,再选范围。单张结果先预览(红绿对比),批量直接写盘并可整批回滚。
+class InferTab extends StatefulWidget {
+  const InferTab({super.key, required this.ws, required this.config, required this.local, required this.onGoModels});
+
+  final Workspace ws;
+  final ConfigStore config;
+  final LocalStore local;
+  final VoidCallback onGoModels;
+
+  @override
+  State<InferTab> createState() => _InferTabState();
+}
+
+class _InferTabState extends State<InferTab> {
+  Workspace get ws => widget.ws;
+  LocalStore get local => widget.local;
+  Engine _engine = Engine.llm;
+  Scope _scope = Scope.current;
+  bool _confirm = false;
+
+  static const _missingLocal = '先在「模型」页下载并选一个本地模型';
+
+  void _say(String message, {bool warn = false}) {
+    if (mounted) showToast(context, message, warn: warn);
+  }
+
+  Future<void> _run() async {
+    final cfg = widget.config.config;
+    if (_engine == Engine.cha) return _runCha();
+    final local = _engine == Engine.local;
+    final run = local ? widget.local.captioner(prompt: cfg.prompt, system: cfg.system) : llmCaptioner(cfg, widget.local);
+    final missing = local ? _missingLocal : '还没有视觉模型 · 去「模型」页添加';
+    if (_scope == Scope.current) {
+      final err = await ws.inferCurrent(run, local ? widget.local.picked?.name ?? '本地' : modelLabel(cfg.vision, widget.local), missing: missing);
+      if (err != null) _say(err, warn: true);
+      return;
+    }
+    final over = ws.scopeEntries(_scope).where((e) => ws.textOf(e).trim().isNotEmpty).length;
+    if (over > 0 && !_confirm) return setState(() => _confirm = true);
+    setState(() => _confirm = false);
+    final err = await ws.startBatch(_scope, run, title: local ? '本地推标' : 'LLM 推标', missing: missing);
+    _report(err);
+  }
+
+  void _report(String? err) {
+    final j = ws.lastJob;
+    if (err != null) return _say(err, warn: true);
+    if (j == null) return;
+    _say(
+      [
+        j.cancelled ? '已取消 · 写入 ${j.changes.length} 张' : '推标完成:写入 ${j.changes.length} 张',
+        if (j.skipped.isNotEmpty) '跳过 ${j.skipped.length}',
+        if (j.failed > 0) '失败 ${j.failed}',
+      ].join(' · '),
+      warn: j.failed > 0,
+    );
+  }
+
+  Future<void> _runCha() async {
+    final cfg = widget.config.config;
+    final list = ws.scopeEntries(_scope);
+    final roster = await showChaDialog(context, config: cfg, local: widget.local, images: list);
+    if (roster == null || !mounted) return;
+    final ask = askerFor(cfg.chaScene ?? cfg.vision, cfg, widget.local);
+    if (ask == null) return _say('整批画面模型不可用 · 去「模型」页设置', warn: true);
+    final counts = <int, int>{};
+    final err = await ws.startBatch(_scope, chaCaptioner(roster, ask, counts), title: 'CHA标注', list: list);
+    if (err != null) return _say(err, warn: true);
+    final j = ws.lastJob;
+    if (j != null && mounted) await showChaSummary(context, roster: roster, counts: counts, job: j);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = widget.config.config;
+    final n = ws.scopeEntries(_scope).length;
+    final over = ws.scopeEntries(_scope).where((e) => ws.textOf(e).trim().isNotEmpty).length;
+    final pending = ws.pending;
+    final runLabel = switch (_engine) {
+      _ when ws.busy => '推理中…',
+      Engine.cha => 'CHA标注 · $n 张',
+      _ => _scope == Scope.current ? '推标当前图片' : '推标 $n 张',
+    };
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
+        const Label('引擎'),
+        Seg<Engine>(
+          expand: true,
+          value: _engine,
+          onChanged: (e) => setState(() {
+            _engine = e;
+            _confirm = false;
+          }),
+          items: const [(Engine.llm, 'LLM', null), (Engine.local, '本地', null), (Engine.cha, 'CHA', null), (Engine.compare, '多对比', null)],
+        ),
+        const SizedBox(height: 12),
+        AnimatedSize(
+          duration: Motion.base,
+          curve: Motion.expand,
+          alignment: Alignment.topCenter,
+          child: AnimatedSwitcher(
+            duration: Motion.of(context, Motion.base),
+            child: KeyedSubtree(
+              key: ValueKey(_engine),
+              child: switch (_engine) {
+                Engine.llm => _llmPanel(cfg.vision),
+                Engine.local => _LocalPanel(local: widget.local, prompt: cfg.prompt, onGoModels: widget.onGoModels),
+                Engine.cha => _chaPanel(),
+                Engine.compare => NlCard(
+                  child: Row(children: [
+                    Icon(Icons.schedule, size: 15, color: NlColors.slate500),
+                    const SizedBox(width: 8),
+                    Text('下一阶段接入', style: TextStyle(fontSize: 12.5, color: NlColors.slate500)),
+                  ]),
+                ),
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Label('范围'),
+        scopeChips(ws, Scope.values, _scope, (s) => setState(() {
+          _scope = s;
+          _confirm = false;
+        })),
+        const SizedBox(height: 14),
+        AnimatedSize(
+          duration: Motion.base,
+          curve: Motion.expand,
+          child: _confirm
+              ? PopIn(
+                  child: NlCard(
+                    color: NlColors.lock,
+                    borderColor: NlColors.lockBorder,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('将覆盖 $over 张现有标注,执行前自动备份。', style: TextStyle(fontSize: 12.5, color: NlColors.lockText)),
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          NlButton(label: '开始推标', tone: Tone.primary, onPressed: _run),
+                          const SizedBox(width: 6),
+                          NlButton(label: '取消', tone: Tone.outline, onPressed: () => setState(() => _confirm = false)),
+                        ]),
+                      ],
+                    ),
+                  ),
+                )
+              : Column(
+                  children: [
+                    NlButton(
+                      expand: true,
+                      tone: Tone.primary,
+                      busy: ws.busy,
+                      icon: _engine == Engine.cha ? Icons.groups_outlined : Icons.play_arrow_rounded,
+                      label: runLabel,
+                      onPressed: _engine == Engine.compare || ws.job != null || n == 0 ? null : _run,
+                    ),
+                    if (_scope != Scope.current || _engine == Engine.cha)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text('自动备份 · 可整批回滚', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+                      ),
+                  ],
+                ),
+        ),
+        const SizedBox(height: 14),
+        AnimatedSwitcher(
+          duration: Motion.of(context, Motion.sheet),
+          switchInCurve: Motion.enter,
+          transitionBuilder: (c, a) => FadeTransition(
+            opacity: a,
+            child: SlideTransition(position: Tween(begin: const Offset(0, .06), end: Offset.zero).animate(a), child: c),
+          ),
+          child: pending == null || pending.key != ws.entry?.key
+              ? const SizedBox.shrink()
+              : _DiffCard(key: ValueKey(pending), ws: ws, result: pending),
+        ),
+      ],
+    );
+  }
+
+  Widget _llmPanel(ModelRef? vision) {
+    final cfg = widget.config.config;
+    final ready = askerFor(vision, cfg, widget.local) != null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _ModelPill(label: modelLabel(vision, widget.local), onTap: _pickVision)),
+            const SizedBox(width: 8),
+            ready ? const Pill('就绪', tone: PillTone.ok) : const Pill('未配置', tone: PillTone.warn),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Label('提示词', trailing: Text('「模型」页可改', style: TextStyle(fontSize: 11, color: NlColors.slate400))),
+        Text(cfg.prompt, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: NlColors.slate700, height: 1.5)),
+      ],
+    );
+  }
+
+  Widget _chaPanel() {
+    final cfg = widget.config.config;
+    String label(ModelRef? r) => modelLabel(r ?? cfg.vision, widget.local);
+    final style = TextStyle(fontSize: 11.5, color: NlColors.slate500);
+    return NlCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('人物卡 + 画面段 · 按图核对服装', style: TextStyle(fontSize: 12.5)),
+          const SizedBox(height: 6),
+          Text('候选:${cfg.chaCards.map(label).join(' / ')}', style: style, maxLines: 2, overflow: TextOverflow.ellipsis),
+          Text('整批画面:${label(cfg.chaScene)}', style: style, overflow: TextOverflow.ellipsis),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickVision() async {
+    final cfg = widget.config.config;
+    if (cfg.pool.isEmpty) return widget.onGoModels();
+    final names = {for (final p in cfg.profiles) p.id: p.name};
+    final picked = await showModalBottomSheet<ModelRef>(
+      context: context,
+      backgroundColor: NlColors.card,
+      builder: (_) => ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.all(12),
+        children: [
+          for (final r in cfg.pool)
+            ListTile(
+              dense: true,
+              title: Text(r.model, style: const TextStyle(fontSize: 13)),
+              subtitle: Text(names[r.profileId] ?? '', style: TextStyle(fontSize: 11, color: NlColors.slate500)),
+              trailing: r == cfg.vision ? Icon(Icons.check, size: 16, color: NlColors.primary) : null,
+              onTap: () => Navigator.pop(context, r),
+            ),
+        ],
+      ),
+    );
+    if (picked != null) await widget.config.update(cfg.copyWith(vision: picked));
+  }
+}
+
+class _ModelPill extends StatelessWidget {
+  const _ModelPill({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Hover(
+    cursor: SystemMouseCursors.click,
+    builder: (hover) => GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: Motion.base,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: NlColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: hover ? NlColors.primaryBorder : NlColors.border),
+        ),
+        child: Row(children: [
+          Icon(Icons.auto_awesome_outlined, size: 16, color: NlColors.primary),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600))),
+          Icon(Icons.expand_more, size: 16, color: NlColors.slate500),
+        ]),
+      ),
+    ),
+  );
+}
+
+/// 「本地」引擎:选中的本地模型和它的状态;Florence-2 在这里选指令。
+class _LocalPanel extends StatelessWidget {
+  const _LocalPanel({required this.local, required this.prompt, required this.onGoModels});
+
+  final LocalStore local;
+  final String prompt;
+  final VoidCallback onGoModels;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = local.picked;
+    if (m == null) {
+      return NlCard(
+        child: Row(children: [
+          Expanded(child: Text('还没选本地模型', style: TextStyle(fontSize: 12.5, color: NlColors.slate500))),
+          NlButton(label: '去选模型', icon: Icons.memory_outlined, tone: Tone.outline, onPressed: onGoModels),
+        ]),
+      );
+    }
+    final ready = local.installed(m);
+    final running = local.server.running && local.server.spec?.model.contains(m.id) == true;
+    final (status, tone) = !ready
+        ? ('未下载', PillTone.warn)
+        : m.florence
+        ? ('就绪', PillTone.ok)
+        : local.starting
+        ? ('启动中', PillTone.blue)
+        : running
+        ? ('运行中', PillTone.ok)
+        : ('按需启动', PillTone.mute);
+    return NlCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.memory_outlined, size: 16, color: NlColors.slate700),
+            const SizedBox(width: 8),
+            Expanded(child: Text(m.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600))),
+            Pill(local.quantOf(m).label),
+            const SizedBox(width: 6),
+            Pill(status, tone: tone),
+          ]),
+          const SizedBox(height: 8),
+          if (m.florence) ...[
+            Text('指令模式', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+            const SizedBox(height: 6),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final t in m.tasks)
+                NlChip(
+                  label: florenceTaskLabels[t] ?? t,
+                  selected: local.florenceTaskOf(m) == t,
+                  onTap: () => local.update(() => local.florenceTask = t),
+                ),
+            ]),
+          ] else
+            Text(
+              ready ? 'llama-server 推理时自动启动 · 空闲 30 秒卸载' : '先到「模型」页下载',
+              style: TextStyle(fontSize: 11.5, color: NlColors.slate500),
+            ),
+          if (!m.florence && ready) ...[
+            const SizedBox(height: 6),
+            Text(prompt, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: NlColors.slate700)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DiffCard extends StatelessWidget {
+  const _DiffCard({super.key, required this.ws, required this.result});
+
+  final Workspace ws;
+  final PendingResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final old = splitSegments(ws.textOf(ws.entry!));
+    final next = splitSegments(result.text);
+    final del = old.where((s) => !next.contains(s)).toList();
+    final add = next.where((s) => !old.contains(s)).toList();
+    Widget line(String s, bool added) => Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(color: added ? NlColors.diffAdd : NlColors.diffDel, borderRadius: BorderRadius.circular(6)),
+      child: Text(
+        s,
+        style: monoStyle.copyWith(
+          color: added ? NlColors.diffAddText : NlColors.diffDelText,
+          decoration: added ? null : TextDecoration.lineThrough,
+          decorationColor: NlColors.diffDelText,
+        ),
+      ),
+    );
+    return NlCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.auto_awesome_outlined, size: 15, color: NlColors.primary),
+            const SizedBox(width: 6),
+            const Text('推理结果', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            Flexible(child: Pill(result.model)),
+          ]),
+          const SizedBox(height: 10),
+          for (final (i, s) in del.indexed) PopIn(delay: Duration(milliseconds: 30 * i), child: line(s, false)),
+          for (final (i, s) in add.indexed) PopIn(delay: Duration(milliseconds: 30 * (del.length + i)), child: line(s, true)),
+          if (del.isEmpty && add.isEmpty) Text('和现在的标注一样', style: TextStyle(fontSize: 12, color: NlColors.slate500)),
+          const SizedBox(height: 6),
+          Text('保留 ${old.length - del.length} 段 · 删 ${del.length} · 增 ${add.length}', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+          const SizedBox(height: 10),
+          Row(children: [
+            NlButton(label: '采纳', icon: Icons.check, tone: Tone.primary, onPressed: ws.acceptPending),
+            const SizedBox(width: 6),
+            NlButton(label: '驳回', tone: Tone.outline, onPressed: ws.rejectPending),
+          ]),
+        ],
+      ),
+    );
+  }
+}
