@@ -69,17 +69,21 @@ class _InferTabState extends State<InferTab> {
   Future<void> _runCha() async {
     final cfg = widget.config.config;
     final list = ws.scopeEntries(_scope);
-    final roster = await showChaDialog(context, config: cfg, local: widget.local, images: list, root: ws.root);
-    if (roster == null || !mounted) return;
-    final ask = askerFor(cfg.chaScene ?? cfg.vision, cfg, widget.local);
+    final plan = await showChaDialog(context, config: cfg, local: widget.local, images: list, root: ws.root, data: ws.dataDir);
+    if (plan == null || !mounted) return;
+    final scene = plan.scene;
+    // 确认页换了整批画面模型就记进设置,下次默认用它。
+    if (scene != (cfg.chaScene ?? cfg.vision)) await widget.config.update(cfg.copyWith(chaScene: (scene,)));
+    final ask = askerFor(scene, cfg, widget.local);
     if (ask == null) return _say('整批画面模型不可用 · 去「模型」页设置', warn: true);
     final counts = <int, int>{};
-    final scene = cfg.chaScene ?? cfg.vision;
-    final err = await ws.startBatch(_scope, chaCaptioner(roster, ask, counts),
+    final err = await ws.startBatch(_scope, chaCaptioner(plan.roster, ask, counts),
         title: 'CHA标注', list: list, parallel: scene?.profileId == localProfileId ? 1 : cfg.parallel);
     if (err != null) return _say(err, warn: true);
     final j = ws.lastJob;
-    if (j != null && mounted) await showChaSummary(context, roster: roster, counts: counts, job: j);
+    if (j != null && mounted) {
+      await showChaSummary(context, roster: plan.roster, counts: counts, job: j, model: modelLabel(scene, widget.local));
+    }
   }
 
   @override

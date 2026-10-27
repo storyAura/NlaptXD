@@ -408,10 +408,14 @@ class LocalStore extends ChangeNotifier {
 
   // —— 存盘 ——
 
+  /// 最近一次存盘;同一文件的写入按顺序排队,等它就等于前面的都写完了。
+  @visibleForTesting
+  Future<void> saved = Future.value();
+
   void update(void Function() change) {
     change();
     notifyListeners();
-    unawaited(_save());
+    saved = _save();
   }
 
   File get _file => File('$_home${_sep}local.json');

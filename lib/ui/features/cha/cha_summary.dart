@@ -12,6 +12,7 @@ Future<void> showChaSummary(
   required List<ChaCard> roster,
   required Map<int, int> counts,
   required InferJob job,
+  required String model,
 }) => showDialog<void>(
   context: context,
   builder: (context) {
@@ -32,7 +33,7 @@ Future<void> showChaSummary(
         child: ListView(
           shrinkWrap: true,
           children: [
-            Text('写入 ${job.changes.length} 张 · 没归类 ${job.skipped.length} · 失败 ${job.failed}', style: label),
+            Text('写入 ${job.changes.length} 张 · 没归类 ${job.skipped.length} · 失败 ${job.failed} · 整批画面 $model', style: label),
             const SizedBox(height: 12),
             for (final (i, c) in roster.indexed)
               PopIn(
@@ -60,9 +61,19 @@ Future<void> showChaSummary(
             ],
             if (job.failed > 0) ...[
               const SizedBox(height: 10),
-              Text('失败 ${job.failed} 张(回复无法解析或请求出错,原文未改)', style: label.copyWith(color: NlColors.diffDelText)),
+              Text('失败 ${job.failed} 张(重试一次仍失败,原文未改)· 原因:', style: label.copyWith(color: NlColors.diffDelText)),
               const SizedBox(height: 4),
-              Tooltip(message: job.lastError ?? '', child: names([for (final e in job.failedEntries) e.name])),
+              for (final (reason, n) in job.failureReasons.take(5))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Pill('$n 张', tone: PillTone.bad),
+                    const SizedBox(width: 6),
+                    Expanded(child: SelectableText(reason, style: TextStyle(fontSize: 12, color: NlColors.slate700))),
+                  ]),
+                ),
+              const SizedBox(height: 4),
+              names([for (final e in job.failedEntries) e.name]),
             ],
           ],
         ),

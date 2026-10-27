@@ -1,16 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'backups.dart';
 import 'cha.dart';
 import 'text_io.dart';
 
 /// 一张角色卡的存档:角色名、作品名、锁定的人物卡、主参考图、部件参考图。
 typedef SavedCard = ({String name, String series, String text, String ref, List<ChaReference> references});
 
-/// 上次确认的角色卡,存在数据集的 `.nlapt/cha_cards.json`,下次 CHA 可以直接复用(不用再花钱生成)。
-/// 数据集里的图存相对路径,整个数据集挪了位置也能找回来。
-File _file(Directory root) => File('${root.path}${Platform.pathSeparator}$sessionDirName${Platform.pathSeparator}cha_cards.json');
+/// 上次确认的角色卡,存在数据集数据目录 [data] 的 `cha_cards.json`(见 dataset_store.dart),
+/// 下次 CHA 可以直接复用(不用再花钱生成)。数据集 [root] 里的图存相对路径,数据集挪了位置也能找回来。
+File _file(Directory data) => File('${data.path}${Platform.pathSeparator}cha_cards.json');
 
 String _rel(Directory root, String path) {
   final base = '${root.absolute.path}${Platform.pathSeparator}';
@@ -20,8 +19,8 @@ String _rel(Directory root, String path) {
 String _abs(Directory root, String path) =>
     path.isEmpty || File(path).isAbsolute ? path : '${root.absolute.path}${Platform.pathSeparator}$path';
 
-Future<void> saveChaCards(Directory root, List<SavedCard> cards) => writeAtomic(
-  _file(root).path,
+Future<void> saveChaCards(Directory data, Directory root, List<SavedCard> cards) => writeAtomic(
+  _file(data).path,
   const JsonEncoder.withIndent('  ').convert({
     'time': DateTime.now().toIso8601String(),
     'cards': [
@@ -40,9 +39,9 @@ Future<void> saveChaCards(Directory root, List<SavedCard> cards) => writeAtomic(
 );
 
 /// 读不到或读坏了返回 null(不挡 CHA,只是不提示复用)。找不到的参考图去掉。
-Future<({DateTime time, List<SavedCard> cards})?> loadChaCards(Directory root) async {
+Future<({DateTime time, List<SavedCard> cards})?> loadChaCards(Directory data, Directory root) async {
   try {
-    final f = _file(root);
+    final f = _file(data);
     if (!await f.exists()) return null;
     final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
     String s(Object? v) => v is String ? v : '';

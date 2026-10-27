@@ -53,7 +53,7 @@ Future<void> main() async {
   await local.load();
   await windowManager.setPreventClose(true);
   windowManager.addListener(_CloseHook(local));
-  final ws = Workspace(onRootChanged: (path) => config.update(config.config.copyWith(lastRoot: path)));
+  final ws = Workspace(dataHome: home, onRootChanged: (path) => config.update(config.config.copyWith(lastRoot: path)));
   final last = config.config.lastRoot;
   if (last.isNotEmpty && Directory(last).existsSync()) {
     try {

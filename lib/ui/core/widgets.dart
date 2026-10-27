@@ -383,12 +383,18 @@ class Pill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999), border: Border.all(color: border)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[Icon(icon, size: 11, color: fg), const SizedBox(width: 3)],
-          Text(text, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg, height: 1.4)),
-        ],
+      // 图标和文字拼成一段:外面给了宽度上限(Expanded / Flexible)就截断,没给就按原长,两种都不出错。
+      child: Text.rich(
+        TextSpan(children: [
+          if (icon != null) ...[
+            WidgetSpan(alignment: PlaceholderAlignment.middle, child: Icon(icon, size: 11, color: fg)),
+            const TextSpan(text: ' '),
+          ],
+          TextSpan(text: text),
+        ]),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg, height: 1.4),
       ),
     );
   }

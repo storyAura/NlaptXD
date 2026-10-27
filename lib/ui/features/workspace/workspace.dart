@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/backups.dart';
 import '../../../core/captions.dart';
 import '../../../core/dataset.dart';
+import '../../../core/dataset_store.dart';
 import '../../../core/history.dart';
 import '../../../core/llm/cleaning.dart';
 import '../../../core/text_io.dart';
@@ -27,11 +28,16 @@ typedef CaptionFn = Future<String?> Function(ImageEntry entry);
 /// 标注台的状态:打开的数据集、每张图的标注(内存里的 / 磁盘上的)、历史、选择、批量与推标。
 /// 标注只在保存或批量操作时写盘;批量操作先打 zip 快照并记进操作日志。
 class Workspace extends ChangeNotifier {
-  Workspace({this.onRootChanged});
+  Workspace({required this.dataHome, this.onRootChanged});
 
+  /// 程序数据的根(「文档/NLaptXD」);每个数据集的快照、日志、角色卡在它的 datasets 下。
+  final Directory dataHome;
   final void Function(String root)? onRootChanged;
 
   Directory? root;
+
+  /// 当前数据集的程序数据目录(见 dataset_store.dart)。
+  Directory? dataDir;
   bool loading = false;
   List<ImageEntry> entries = const [];
   final _text = <String, String>{};
@@ -80,7 +86,11 @@ class Workspace extends ChangeNotifier {
       current = 0;
       _anchor = 0;
       pending = null;
-      oplog = OpLog(dir);
+      final data = dataDir = datasetDataDir(dataHome, dir);
+      // 早先放在数据集里的 .nlapt / .backups 搬到文档里。
+      final moved = await migrateLegacyData(dir, data);
+      if (moved > 0) debugPrint('已把 $moved 个旧数据文件从数据集搬到 ${data.path}');
+      oplog = OpLog(data);
       await oplog!.load();
       onRootChanged?.call(dir.path);
     } finally {

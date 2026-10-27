@@ -60,7 +60,7 @@ void main() {
       a.pickQuant(gguf, other.label);
       a.use(gguf);
       a.update(() => a.source = 'huggingface');
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await a.saved;
       final b = LocalStore(Directory(tmp.path));
       await b.load();
       expect(b.quantOf(gguf).label, other.label);

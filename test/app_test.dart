@@ -29,7 +29,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final config = ConfigStore(home);
-    final ws = Workspace();
+    final ws = Workspace(dataHome: home);
     if (open) await tester.runAsync(() => ws.open(data));
     await tester.pumpWidget(NlaptApp(config: config, ws: ws, local: LocalStore(home), windowChrome: false));
     await tester.pumpAndSettle();

@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 
 import 'text_io.dart';
 
+/// 早先放在数据集文件夹里的两个目录;现在数据放在「文档/NLaptXD/datasets」(见 dataset_store.dart),
+/// 打开数据集时把它们搬过去。快照时仍跳过它们(万一没搬走)。
 const backupDirName = '.backups';
 const sessionDirName = '.nlapt';
 const defaultKeep = 20;
@@ -13,9 +15,9 @@ const defaultKeep = 20;
 String _two(int n) => '$n'.padLeft(2, '0');
 final _unsafe = RegExp(r'[\\/:*?"<>|\s]+');
 
-/// 批量操作前把数据集里全部 txt 打成 zip 放进 `.backups/`,只留最新 [keep] 份。
+/// 批量操作前把数据集 [root] 里全部 txt 打成 zip 放进 [backups],只留最新 [keep] 份。
 /// 返回 zip 的文件名(和旧版同名格式:`2026-10-26_1428_查找替换.zip`)。
-Future<String> snapshotCaptions(Directory root, String operation, {DateTime? now, int keep = defaultKeep}) async {
+Future<String> snapshotCaptions(Directory root, Directory backups, String operation, {DateTime? now, int keep = defaultKeep}) async {
   final t = now ?? DateTime.now();
   final rootPath = root.absolute.path;
   final archive = Archive();
@@ -26,7 +28,7 @@ Future<String> snapshotCaptions(Directory root, String operation, {DateTime? now
     final bytes = await e.readAsBytes();
     archive.addFile(ArchiveFile(rel, bytes.length, bytes));
   }
-  final dir = Directory('$rootPath${Platform.pathSeparator}$backupDirName');
+  final dir = backups;
   await dir.create(recursive: true);
   final op = operation.trim().replaceAll(_unsafe, '_');
   final base = '${t.year}-${_two(t.month)}-${_two(t.day)}_${_two(t.hour)}${_two(t.minute)}_$op';
@@ -112,10 +114,9 @@ class OpRecord {
   );
 }
 
-/// `.nlapt/oplog.json`:批量操作的记录,新的在前;整批回滚靠它。
+/// 数据集数据目录里的 `oplog.json`:批量操作的记录,新的在前;整批回滚靠它。
 class OpLog {
-  OpLog(Directory root)
-    : _file = File('${root.absolute.path}${Platform.pathSeparator}$sessionDirName${Platform.pathSeparator}oplog.json');
+  OpLog(Directory data) : _file = File('${data.absolute.path}${Platform.pathSeparator}oplog.json');
 
   final File _file;
   List<OpRecord> _records = const [];
@@ -129,7 +130,7 @@ class OpLog {
       final list = jsonDecode(await _file.readAsString()) as List;
       _records = List.unmodifiable([for (final j in list) OpRecord.fromJson(j as Map<String, dynamic>)]);
     } on Object catch (e) {
-      // 日志坏了不挡打开数据集;备份 zip 还在 .backups 里。
+      // 日志坏了不挡打开数据集;备份 zip 还在数据目录的 backups 里。
       debugPrint('操作日志读取失败,按空的处理:$e');
       _records = const [];
     }

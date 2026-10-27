@@ -8,6 +8,7 @@ import 'package:nlaptxd/ui/features/workspace/workspace.dart';
 
 void main() {
   late Directory root;
+  late Directory home;
   late Workspace ws;
   CaptionFn? fake;
 
@@ -20,10 +21,32 @@ void main() {
       if (cap.isNotEmpty) File('${root.path}/${rel.replaceAll('.png', '.txt')}').writeAsStringSync(cap);
     }
     fake = (ImageEntry e) async => e.name == '2.png' ? throw Exception('refused') : 'new ${e.name}';
-    ws = Workspace();
+    home = await Directory.systemTemp.createTemp('nlx_ws_home');
+    ws = Workspace(dataHome: home);
     await ws.open(root);
   });
-  tearDown(() => root.delete(recursive: true));
+  tearDown(() async {
+    await root.delete(recursive: true);
+    await home.delete(recursive: true);
+  });
+
+  test('old .nlapt / .backups in the dataset move to the data dir on open', () async {
+    File('${root.path}/.nlapt/oplog.json')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('[]');
+    File('${root.path}/.nlapt/cha_cards.json').writeAsStringSync('{}');
+    File('${root.path}/.backups/2026-10-26_1428_op.zip')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('zip');
+    await ws.open(root);
+    final data = ws.dataDir!.path;
+    expect(File('$data/oplog.json').existsSync(), isTrue);
+    expect(File('$data/cha_cards.json').existsSync(), isTrue);
+    expect(File('$data/backups/2026-10-26_1428_op.zip').readAsStringSync(), 'zip');
+    expect(Directory('${root.path}/.nlapt').existsSync(), isFalse);
+    expect(Directory('${root.path}/.backups').existsSync(), isFalse);
+    expect(ws.dataDir!.path, contains('datasets'));
+  });
 
   test('edits stay in memory until saved, and undo walks back', () async {
     ws.setText('violet hair, solo, smile', label: '编辑');
@@ -47,7 +70,8 @@ void main() {
     final n = await ws.findReplace(Scope.all, const FindSpec('violet'), 'purple');
     expect(n, 2);
     expect(txt('a/2.txt'), 'purple hair');
-    expect(Directory('${root.path}/.backups').listSync(), hasLength(1));
+    expect(Directory('${ws.dataDir!.path}/backups').listSync(), hasLength(1), reason: '快照在文档里,不在数据集里');
+    expect(Directory('${root.path}/.backups').existsSync(), isFalse);
     final op = ws.oplog!.records.single;
     expect(op.changes, hasLength(2));
     ws.select(1);
@@ -98,6 +122,20 @@ void main() {
     }, parallel: 3);
     expect(peak, 3);
     expect([txt('a/1.txt'), txt('a/2.txt'), txt('b/3.txt')], ['new 1.png', 'new 2.png', 'new 3.png'], reason: '回答先洗掉前缀和引号');
+  });
+
+  test('a failed call is retried once; failures that stay are grouped by reason', () async {
+    final calls = <String, int>{};
+    await ws.startBatch(Scope.all, (e) async {
+      final n = calls[e.name] = (calls[e.name] ?? 0) + 1;
+      if (e.name == '1.png' && n == 1) throw Exception('429 busy'); // 第一次被限流,重试就好
+      if (e.name != '1.png') throw Exception('CARD missing');
+      return 'ok';
+    }, retryDelay: Duration.zero);
+    expect(txt('a/1.txt'), 'ok');
+    expect(calls, {'1.png': 2, '2.png': 2, '3.png': 2});
+    expect(ws.lastJob!.failureReasons, [('Exception: CARD missing', 2)]);
+    expect(ws.lastJob!.summary, contains('CARD missing'));
   });
 
   test('a refusal counts as a failure and keeps the original caption', () async {

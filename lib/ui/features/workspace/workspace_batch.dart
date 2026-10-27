@@ -9,7 +9,7 @@ extension WorkspaceBatch on Workspace {
         if (value != textOf(key) || isDirty(key)) key: value,
     };
     if (todo.isEmpty || root == null) return 0;
-    final zip = await snapshotCaptions(root!, title);
+    final zip = await snapshotCaptions(root!, backupsDir(dataDir!), title);
     final changes = [for (final e in todo.keys) OpChange(relPath(e), _saved[e.key] ?? '')];
     for (final MapEntry(key: e, value: text) in todo.entries) {
       await writeAtomic(e.txtPath, text);

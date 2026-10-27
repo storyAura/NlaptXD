@@ -32,7 +32,7 @@ void main() {
     final config = ConfigStore(home);
     // 选了「大模型」却没选文本模型:翻译一定失败,并说明去哪设置。
     await tester.runAsync(() => config.update(const AppConfig(translate: TranslateSettings(service: TranslateService.llm))));
-    final ws = Workspace();
+    final ws = Workspace(dataHome: home);
     await tester.runAsync(() => ws.open(data));
     await tester.pumpWidget(NlaptApp(config: config, ws: ws, local: LocalStore(home), windowChrome: false));
     await tester.pumpAndSettle();

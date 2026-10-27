@@ -25,9 +25,22 @@ class InferJob {
   /// 推标函数返回 null 的图(CHA:不属于任何角色卡),没写。
   final skipped = <ImageEntry>[];
   final failedEntries = <ImageEntry>[];
+
+  /// 每张失败的图为什么失败(重试过一次仍失败的)。
+  final errors = <ImageEntry, String>{};
   int done = 0;
   int get failed => failedEntries.length;
   String? lastError;
+
+  /// 失败原因归类:同样的话算一组,按张数从多到少。拒绝类的回答预览不一样,只按前半句归。
+  List<(String, int)> get failureReasons {
+    final counts = <String, int>{};
+    for (final m in errors.values) {
+      final key = m.split('原文未改:').first.trim();
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return [for (final MapEntry(:key, :value) in counts.entries) (key, value)]..sort((a, b) => b.$2.compareTo(a.$2));
+  }
   bool cancelled = false;
   bool hidden = false;
 
@@ -42,8 +55,10 @@ class InferJob {
   String get summary => [
     cancelled ? '已取消 · 写入 ${changes.length} 张' : '推标完成:写入 ${changes.length} 张',
     if (skipped.isNotEmpty) '跳过 ${skipped.length}',
-    if (failed > 0) '失败 $failed',
+    if (failed > 0) '失败 $failed(${_brief(failureReasons.first.$1)})',
   ].join(' · ');
+
+  static String _brief(String s) => s.length > 60 ? '${s.substring(0, 60)}…' : s;
 
   Duration get remaining {
     if (done == 0) return Duration.zero;
@@ -103,6 +118,7 @@ extension WorkspaceInfer on Workspace {
     List<ImageEntry>? list,
     String missing = '还没有视觉模型 · 去「模型」页添加',
     int parallel = 1,
+    Duration retryDelay = const Duration(seconds: 1),
   }) async {
     if (run == null) return missing;
     if (job != null || root == null) return null;
@@ -110,7 +126,7 @@ extension WorkspaceInfer on Workspace {
     if (items.isEmpty) return '范围内没有图片';
     final j = job = InferJob(title, items);
     changed();
-    final zip = await snapshotCaptions(root!, j.title);
+    final zip = await snapshotCaptions(root!, backupsDir(dataDir!), j.title);
     final before = {for (final e in items) e.key: _saved[e.key] ?? ''};
     var next = 0;
     // 几个「工人」轮流从队列里取下一张;取消后各自做完手上这张就停。
@@ -118,7 +134,15 @@ extension WorkspaceInfer on Workspace {
       while (!j.cancelled && next < items.length) {
         final e = items[next++];
         try {
-          final raw = await run(e);
+          String? raw;
+          try {
+            raw = await run(e);
+          } on Object {
+            // 偶尔的限流、超时、回复格式不对,隔一下再试一次;还不行才算失败。
+            if (j.cancelled) rethrow;
+            await Future<void>.delayed(retryDelay);
+            raw = await run(e);
+          }
           if (raw == null) {
             j.skipped.add(e);
           } else {
@@ -129,7 +153,7 @@ extension WorkspaceInfer on Workspace {
           }
         } on Object catch (err) {
           j.failedEntries.add(e);
-          j.lastError = '$err';
+          j.errors[e] = j.lastError = '$err';
         }
         j.done++;
         changed();

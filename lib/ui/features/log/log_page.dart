@@ -54,7 +54,7 @@ class _LogPageState extends State<LogPage> {
               const SizedBox(width: 10),
               Text('批量操作 · 自动备份', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
               const Spacer(),
-              Text('.backups · 保留 $defaultKeep 份', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+              Text('快照存在「文档/NLaptXD/datasets」· 保留 $defaultKeep 份', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
             ],
           ),
           Expanded(

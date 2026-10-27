@@ -50,6 +50,7 @@ void main() {
                 local: LocalStore(root),
                 images: images,
                 root: root,
+                data: root,
               ),
               child: const Text('open'),
             ),
@@ -82,7 +83,7 @@ void main() {
     'cards saved last time can be reused and go straight to confirm',
     (tester) async {
       await tester.runAsync(
-        () => saveChaCards(root, [
+        () => saveChaCards(root, root, [
           (
             name: 'Si',
             series: 'Arknights',

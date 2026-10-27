@@ -7,7 +7,9 @@ import '../../../core/cha.dart';
 import '../../../core/cha_store.dart';
 import '../../../core/local/character_index.dart';
 import '../../../core/dataset.dart';
+import '../../../core/llm/api_profile.dart';
 import '../../../data/app_config.dart';
+import '../../core/select.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
@@ -17,18 +19,22 @@ import '../workspace/gloss_pane.dart';
 
 export 'cha_summary.dart';
 
-/// CHA 向导:角色卡 → 三套人物卡候选 → 确认。确认后返回锁定的人物卡,取消返回 null。
-/// 给了 [root](数据集)时,确认的角色卡存进它的 .nlapt,下次打开可以直接复用。
-Future<List<ChaCard>?> showChaDialog(
+/// CHA 向导返回的:锁定的人物卡和整批画面用的模型。
+typedef ChaPlan = ({List<ChaCard> roster, ModelRef? scene});
+
+/// CHA 向导:角色卡 → 三套人物卡候选 → 确认(在这里定整批画面用哪个模型)。取消返回 null。
+/// 给了 [root](数据集)和 [data](它的数据目录)时,确认的角色卡存进 [data],下次打开可以直接复用。
+Future<ChaPlan?> showChaDialog(
   BuildContext context, {
   required AppConfig config,
   required LocalStore local,
   required List<ImageEntry> images,
   Directory? root,
-}) => showDialog<List<ChaCard>>(
+  Directory? data,
+}) => showDialog<ChaPlan>(
   context: context,
   barrierDismissible: false,
-  builder: (_) => _ChaDialog(config: config, local: local, images: images, root: root),
+  builder: (_) => _ChaDialog(config: config, local: local, images: images, root: root, data: data),
 );
 
 enum _Status { idle, busy, done, error }
@@ -59,12 +65,13 @@ class _Slot {
 }
 
 class _ChaDialog extends StatefulWidget {
-  const _ChaDialog({required this.config, required this.local, required this.images, this.root});
+  const _ChaDialog({required this.config, required this.local, required this.images, this.root, this.data});
 
   final AppConfig config;
   final LocalStore local;
   final List<ImageEntry> images;
   final Directory? root;
+  final Directory? data;
 
   @override
   State<_ChaDialog> createState() => _ChaDialogState();
@@ -90,12 +97,15 @@ class _ChaDialogState extends State<_ChaDialog> {
 
   bool _identifying = false;
 
+  /// 整批画面用的模型:默认是设置里的(没设就是视觉模型),确认页可以换。
+  late ModelRef? _scene = widget.config.chaScene ?? widget.config.vision;
+
   @override
   void initState() {
     super.initState();
-    final root = widget.root;
-    if (root != null) {
-      loadChaCards(root).then((saved) {
+    final (root, data) = (widget.root, widget.data);
+    if (root != null && data != null) {
+      loadChaCards(data, root).then((saved) {
         if (mounted) setState(() => _saved = saved);
       });
     }
@@ -133,9 +143,9 @@ class _ChaDialogState extends State<_ChaDialog> {
 
   /// 确认时存档(失败只记日志:CHA 照常进行)。
   void _save() {
-    final root = widget.root;
-    if (root == null) return;
-    saveChaCards(root, [
+    final (root, data) = (widget.root, widget.data);
+    if (root == null || data == null) return;
+    saveChaCards(data, root, [
       for (final s in _slots)
         (
           name: s.name.text.trim(),
@@ -309,13 +319,17 @@ class _ChaDialogState extends State<_ChaDialog> {
       setState(() => _step = 3);
     } else {
       _save();
-      Navigator.pop(context, [
-        for (final s in _slots)
-          ChaCard.fromText(s.name.text, s.series.text, s.cands[s.pick].text, [
-            for (final e in s.extras)
-              if (e.path.isNotEmpty) (path: e.path, label: e.label.text),
-          ]),
-      ]);
+      final ChaPlan plan = (
+        roster: [
+          for (final s in _slots)
+            ChaCard.fromText(s.name.text, s.series.text, s.cands[s.pick].text, [
+              for (final e in s.extras)
+                if (e.path.isNotEmpty) (path: e.path, label: e.label.text),
+            ]),
+        ],
+        scene: _scene,
+      );
+      Navigator.pop(context, plan);
     }
   }
 
@@ -649,8 +663,17 @@ class _ChaDialogState extends State<_ChaDialog> {
                     Row(children: [
                       Text('候选 ${v + 1}', style: const TextStyle(fontWeight: FontWeight.w600)),
                       const SizedBox(width: 6),
-                      Flexible(child: Pill(modelLabel(cfg.chaCards[v] ?? cfg.vision, widget.local))),
-                      const Spacer(),
+                      // 模型名长时截断(悬停看全名),不压到右边的按钮。
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Tooltip(
+                            message: modelLabel(cfg.chaCards[v] ?? cfg.vision, widget.local),
+                            child: Pill(modelLabel(cfg.chaCards[v] ?? cfg.vision, widget.local)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
                       NlIconButton(Icons.refresh, tooltip: '重新生成', onPressed: s.status[v] == _Status.busy ? null : () => _generate(s, v)),
                     ]),
                     const SizedBox(height: 8),
@@ -732,20 +755,54 @@ class _ChaDialogState extends State<_ChaDialog> {
             );
           }),
         ],
-        Text(
-          '整批画面模型 ${modelLabel(cfg.chaScene ?? cfg.vision, widget.local)} · 写成「人物卡 + 空行 + 画面段」· '
-          '不属于任何角色卡的图跳过 · 先自动备份',
-          style: label,
+        NlCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [
+                const Text('整批画面', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(width: 8),
+                Expanded(child: Text('每张图:判定属于哪张卡 · 核对服装 · 删掉看不见的细节 · 写画面段', style: label)),
+              ]),
+              const SizedBox(height: 8),
+              NlSelect<ModelRef?>(
+                value: _sceneOptions.contains(_scene) ? _scene : null,
+                hint: '选整批画面用的模型',
+                items: [for (final r in _sceneOptions) (r, _modelName(r))],
+                onChanged: (r) => setState(() => _scene = r),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '同时 ${_scene?.profileId == localProfileId ? 1 : cfg.parallel} 张 · 失败自动重试一次 · 写成「人物卡 + 空行 + 画面段」· '
+                '不属于任何角色卡的图跳过 · 先自动备份',
+                style: label,
+              ),
+            ],
+          ),
         ),
       ],
     );
+  }
+
+  /// 整批画面能选的:模型池里的,加上已下载的本地 GGUF 模型(Florence-2 不行:它不吃自定义提示词)。
+  List<ModelRef> get _sceneOptions {
+    final local = widget.local.picked;
+    return [
+      ...widget.config.pool,
+      if (local != null && !local.florence && widget.local.installed(local)) const ModelRef(localProfileId, ''),
+    ];
+  }
+
+  String _modelName(ModelRef r) {
+    final p = widget.config.profiles.where((p) => p.id == r.profileId).firstOrNull;
+    return r.profileId == localProfileId ? modelLabel(r, widget.local) : '${p?.name ?? ''} · ${r.model}';
   }
 
   Widget _footer() {
     final ok = switch (_step) {
       1 => _canGenerate,
       2 => _canConfirm,
-      _ => true,
+      _ => _sceneOptions.contains(_scene),
     };
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 12, 22, 12),
@@ -755,7 +812,14 @@ class _ChaDialogState extends State<_ChaDialog> {
           if (_step > 1) NlButton(label: '上一步', icon: Icons.arrow_back, tone: Tone.outline, onPressed: () => setState(() => _step--)),
           const Spacer(),
           if (!ok)
-            Text(_step == 1 ? '先填写每张角色卡的角色名' : '为每张角色卡选定一套人物卡', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+            Text(
+              switch (_step) {
+                1 => '先填写每张角色卡的角色名',
+                2 => '为每张角色卡选定一套人物卡',
+                _ => ok ? '确认后开始' : '先选整批画面用的模型',
+              },
+              style: TextStyle(fontSize: 11.5, color: NlColors.slate500),
+            ),
           const SizedBox(width: 10),
           NlButton(
             label: switch (_step) {
