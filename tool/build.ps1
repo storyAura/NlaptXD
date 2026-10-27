@@ -13,6 +13,9 @@ subst $drive (Split-Path $root -Parent)
 try {
   Push-Location "$drive\$(Split-Path $root -Leaf)"
   flutter pub get | Out-Null
+  # 增量编译不重新裁图标字体:新用到的 Material 图标进不了 MaterialIcons-Regular.otf,导航栏上就是空白(踩过)。
+  # 删掉资源目录逼它重新生成,比 Penna 那样整个 flutter clean 快得多。
+  Remove-Item -Recurse -Force build\flutter_assets -Confirm:$false -ErrorAction SilentlyContinue
   # flutter_onnxruntime(Florence-2 用)在 CMake 里从 GitHub 下载 ONNX Runtime、不检查成败,网络不稳就编不过。
   # 压缩包缓存在 .cache\(只下一次;本机有 Penna 的缓存就直接拿来),编译前先解到插件要找的位置(同 Penna)。
   $ortCmake = 'windows\flutter\ephemeral\.plugin_symlinks\flutter_onnxruntime\windows\CMakeLists.txt'

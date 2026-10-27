@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/captions.dart';
 import '../../../core/llm/api_profile.dart';
 import '../../../core/local/florence.dart';
 import '../../../data/config_store.dart';
@@ -9,6 +8,7 @@ import '../../core/theme.dart';
 import '../../core/widgets.dart';
 import '../cha/cha_dialog.dart';
 import '../local/local_store.dart';
+import 'diff_card.dart';
 import 'engines.dart';
 import 'side_panel.dart';
 import 'workspace.dart';
@@ -55,22 +55,15 @@ class _InferTabState extends State<InferTab> {
     final over = ws.scopeEntries(_scope).where((e) => ws.textOf(e).trim().isNotEmpty).length;
     if (over > 0 && !_confirm) return setState(() => _confirm = true);
     setState(() => _confirm = false);
-    final err = await ws.startBatch(_scope, run, title: local ? '本地推标' : 'LLM 推标', missing: missing);
+    // ponytail: 本地模型一次只推一张(Florence 只有一个会话,llama-server 没开多槽);要提速给 llama-server 加 --parallel。
+    final err = await ws.startBatch(_scope, run, title: local ? '本地推标' : 'LLM 推标', missing: missing, parallel: local ? 1 : cfg.parallel);
     _report(err);
   }
 
   void _report(String? err) {
     final j = ws.lastJob;
     if (err != null) return _say(err, warn: true);
-    if (j == null) return;
-    _say(
-      [
-        j.cancelled ? '已取消 · 写入 ${j.changes.length} 张' : '推标完成:写入 ${j.changes.length} 张',
-        if (j.skipped.isNotEmpty) '跳过 ${j.skipped.length}',
-        if (j.failed > 0) '失败 ${j.failed}',
-      ].join(' · '),
-      warn: j.failed > 0,
-    );
+    if (j != null) _say(j.summary, warn: j.failed > 0);
   }
 
   Future<void> _runCha() async {
@@ -81,7 +74,9 @@ class _InferTabState extends State<InferTab> {
     final ask = askerFor(cfg.chaScene ?? cfg.vision, cfg, widget.local);
     if (ask == null) return _say('整批画面模型不可用 · 去「模型」页设置', warn: true);
     final counts = <int, int>{};
-    final err = await ws.startBatch(_scope, chaCaptioner(roster, ask, counts), title: 'CHA标注', list: list);
+    final scene = cfg.chaScene ?? cfg.vision;
+    final err = await ws.startBatch(_scope, chaCaptioner(roster, ask, counts),
+        title: 'CHA标注', list: list, parallel: scene?.profileId == localProfileId ? 1 : cfg.parallel);
     if (err != null) return _say(err, warn: true);
     final j = ws.lastJob;
     if (j != null && mounted) await showChaSummary(context, roster: roster, counts: counts, job: j);
@@ -190,9 +185,10 @@ class _InferTabState extends State<InferTab> {
             opacity: a,
             child: SlideTransition(position: Tween(begin: const Offset(0, .06), end: Offset.zero).animate(a), child: c),
           ),
-          child: pending == null || pending.key != ws.entry?.key
+          // 翻译结果在编辑器底部预览,这里只放推理结果。
+          child: pending == null || pending.key != ws.entry?.key || pending.translated
               ? const SizedBox.shrink()
-              : _DiffCard(key: ValueKey(pending), ws: ws, result: pending),
+              : DiffCard(key: ValueKey(pending), ws: ws, result: pending),
         ),
       ],
     );
@@ -354,61 +350,6 @@ class _LocalPanel extends StatelessWidget {
             const SizedBox(height: 6),
             Text(prompt, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: NlColors.slate700)),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _DiffCard extends StatelessWidget {
-  const _DiffCard({super.key, required this.ws, required this.result});
-
-  final Workspace ws;
-  final PendingResult result;
-
-  @override
-  Widget build(BuildContext context) {
-    final old = splitSegments(ws.textOf(ws.entry!));
-    final next = splitSegments(result.text);
-    final del = old.where((s) => !next.contains(s)).toList();
-    final add = next.where((s) => !old.contains(s)).toList();
-    Widget line(String s, bool added) => Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(color: added ? NlColors.diffAdd : NlColors.diffDel, borderRadius: BorderRadius.circular(6)),
-      child: Text(
-        s,
-        style: monoStyle.copyWith(
-          color: added ? NlColors.diffAddText : NlColors.diffDelText,
-          decoration: added ? null : TextDecoration.lineThrough,
-          decorationColor: NlColors.diffDelText,
-        ),
-      ),
-    );
-    return NlCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.auto_awesome_outlined, size: 15, color: NlColors.primary),
-            const SizedBox(width: 6),
-            const Text('推理结果', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-            const Spacer(),
-            Flexible(child: Pill(result.model)),
-          ]),
-          const SizedBox(height: 10),
-          for (final (i, s) in del.indexed) PopIn(delay: Duration(milliseconds: 30 * i), child: line(s, false)),
-          for (final (i, s) in add.indexed) PopIn(delay: Duration(milliseconds: 30 * (del.length + i)), child: line(s, true)),
-          if (del.isEmpty && add.isEmpty) Text('和现在的标注一样', style: TextStyle(fontSize: 12, color: NlColors.slate500)),
-          const SizedBox(height: 6),
-          Text('保留 ${old.length - del.length} 段 · 删 ${del.length} · 增 ${add.length}', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
-          const SizedBox(height: 10),
-          Row(children: [
-            NlButton(label: '采纳', icon: Icons.check, tone: Tone.primary, onPressed: ws.acceptPending),
-            const SizedBox(width: 6),
-            NlButton(label: '驳回', tone: Tone.outline, onPressed: ws.rejectPending),
-          ]),
         ],
       ),
     );

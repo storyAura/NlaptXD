@@ -4,6 +4,8 @@ import '../../../core/cha.dart';
 import '../../../core/dataset.dart';
 import '../../../core/llm/api_profile.dart';
 import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/translate.dart';
+import '../../../core/llm/vision_image.dart';
 import '../../../data/app_config.dart';
 import '../local/local_store.dart';
 import 'workspace.dart';
@@ -11,8 +13,8 @@ import 'workspace.dart';
 /// 给提示词和图(第一张是主图),拿回模型的回答。在线接口和本地 GGUF 都统一成这一种。
 typedef VisionAsk = Future<String> Function({required String prompt, String system, required List<ImagePart> images});
 
-// ponytail: 原图直接发送(base64),不先缩到长边 1024;大图多的数据集慢、费 token,要省时加缩图。
-Future<ImagePart> readImage(String path) async => (bytes: await File(path).readAsBytes(), mime: imageMime(path));
+/// 读图并缩好(长边 1024、JPEG),在线接口和本地 llama-server 都发这个。
+Future<ImagePart> readImage(String path) async => prepareImage(await File(path).readAsBytes(), imageMime(path));
 
 /// [ref] 指的模型能用时给出问它的函数;接口停用了、模型没勾、本地模型没下载或是 Florence-2 时为 null。
 VisionAsk? askerFor(ModelRef? ref, AppConfig c, LocalStore local) {
@@ -31,6 +33,16 @@ VisionAsk? askerFor(ModelRef? ref, AppConfig c, LocalStore local) {
     image: images.first.bytes,
     mime: images.first.mime,
     extra: images.skip(1).toList(),
+  );
+}
+
+/// 按设置里的翻译服务给出翻译器;「大模型」走当前文本模型(没选或接口停用时那一家跳过)。
+Translator translatorFor(AppConfig c) {
+  final ref = c.textModel;
+  final profile = c.profileOf(ref);
+  return Translator(
+    c.translate,
+    llm: profile == null ? null : (prompt, system) => OpenAiClient(profile).chat(model: ref!.model, prompt: prompt, system: system),
   );
 }
 

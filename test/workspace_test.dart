@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nlaptxd/core/dataset.dart';
@@ -85,6 +86,42 @@ void main() {
     expect(txt('a/1.txt'), 'violet hair, solo');
     expect(ws.lastJob!.skipped.map((e) => e.name), ['1.png']);
     expect(ws.oplog!.records.single.detail, contains('跳过 1'));
+  });
+
+  test('parallel batch runs several calls at once and still writes every caption', () async {
+    var running = 0, peak = 0;
+    await ws.startBatch(Scope.all, (e) async {
+      peak = math.max(peak, ++running);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      running--;
+      return 'caption: "new ${e.name}"';
+    }, parallel: 3);
+    expect(peak, 3);
+    expect([txt('a/1.txt'), txt('a/2.txt'), txt('b/3.txt')], ['new 1.png', 'new 2.png', 'new 3.png'], reason: '回答先洗掉前缀和引号');
+  });
+
+  test('a refusal counts as a failure and keeps the original caption', () async {
+    await ws.startBatch(Scope.all, (e) async => e.name == '1.png' ? "I'm sorry, I can't help with that." : 'ok');
+    expect(txt('a/1.txt'), 'violet hair, solo');
+    expect(ws.lastJob!.lastError, contains('拒绝'));
+    expect(txt('a/2.txt'), 'ok');
+  });
+
+  test('chinese to english translates only chinese segments, skips failures, and rolls back as one batch', () async {
+    ws.setText('violet hair, 微笑', label: '编辑');
+    ws.select(1);
+    ws.setText('坏掉的', label: '编辑');
+    await ws.saveAll();
+    final r = await ws.translateChineseToEnglish(
+      Scope.all,
+      perSegment: true,
+      toEnglish: (t) async => t == '坏掉的' ? throw Exception('boom') : 'smile',
+    );
+    expect((r.written, r.failed), (1, 1));
+    expect(txt('a/1.txt'), 'violet hair, smile');
+    expect(txt('a/2.txt'), '坏掉的');
+    await ws.rollback(ws.oplog!.records.first.id);
+    expect(txt('a/1.txt'), 'violet hair, 微笑');
   });
 
   test('without a vision model inference explains what to do', () async {

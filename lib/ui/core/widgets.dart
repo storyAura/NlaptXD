@@ -532,6 +532,40 @@ void showToast(BuildContext context, String message, {bool warn = false, (String
     );
 }
 
+/// 确认弹窗:点 [ok] 返回 true,取消或点外面返回 false。
+Future<bool> confirmDialog(BuildContext context, String title, String body, {String ok = '继续'}) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Text(body, style: TextStyle(fontSize: 12.5, color: NlColors.slate500)),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    NlButton(label: '取消', tone: Tone.ghost, onPressed: () => Navigator.pop(context, false)),
+                    const SizedBox(width: 8),
+                    NlButton(label: ok, tone: Tone.primary, onPressed: () => Navigator.pop(context, true)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ) ??
+    false;
+
 /// 输入框:无标签,圆角 6,聚焦时描边变主色。
 InputDecoration fieldDecoration(String hint, {IconData? icon}) => InputDecoration(
   hintText: hint,

@@ -11,12 +11,16 @@ import '../../../core/dataset.dart';
 import '../../../core/l10n.dart';
 import '../../../core/llm/api_profile.dart';
 import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/vision_image.dart';
 import '../../../core/local/caption_catalog.dart';
+import '../../../core/local/character_index.dart';
+import '../../../core/local/cl_tagger.dart';
 import '../../../core/local/download.dart';
 import '../../../core/local/florence.dart';
 import '../../../core/local/llama_server.dart';
 import '../../../core/text_io.dart';
 import '../../../data/local/florence_engine.dart';
+import '../../../data/local/onnx_model.dart';
 import '../workspace/workspace.dart';
 
 /// 模型池里「本地模型」那一项的接口 id(CHA 的模型位可以选它)。
@@ -55,6 +59,9 @@ class LocalStore extends ChangeNotifier {
   int port = 8091;
   int context = 8192;
   int gpuLayers = -1;
+
+  /// 用户选的 CL Tagger 文件夹;空 = 默认的 models\cl-tagger-v2。
+  String taggerDir = '';
 
   // —— 只在内存里 ——
   final _downloads = <String, Progress>{};
@@ -124,10 +131,11 @@ class LocalStore extends ChangeNotifier {
   // —— 下载 ——
 
   /// 依次下载 [files],进度记在 [key] 下。失败时返回给用户看的原因。
-  Future<String?> download(String key, List<RemoteFile> files) async {
+  /// 文件不校验大小时,进度条按 [approxTotal] 算。
+  Future<String?> download(String key, List<RemoteFile> files, {Map<String, String> headers = const {}, int? approxTotal}) async {
     if (_downloads.containsKey(key)) return '正在下载';
     final cancel = _cancels[key] = DownloadCancel();
-    final total = files.fold<int>(0, (a, f) => a + (f.size ?? 0));
+    final total = approxTotal ?? files.fold<int>(0, (a, f) => a + (f.size ?? 0));
     var before = 0;
     _downloads[key] = (received: 0, total: total);
     notifyListeners();
@@ -137,6 +145,7 @@ class LocalStore extends ChangeNotifier {
         await downloadFile(
           f,
           cancel: cancel,
+          headers: headers,
           onProgress: (got, _) {
             _downloads[key] = (received: before + got, total: total);
             notifyListeners();
@@ -286,7 +295,7 @@ class LocalStore extends ChangeNotifier {
     return (ImageEntry e) async {
       final bytes = await File(e.imagePath).readAsBytes();
       if (m.florence) return _florenceCaption(m, bytes);
-      return ask(prompt: prompt, system: system, images: [(bytes: bytes, mime: imageMime(e.imagePath))]);
+      return ask(prompt: prompt, system: system, images: [await prepareImage(bytes, imageMime(e.imagePath))]);
     };
   }
 
@@ -316,6 +325,87 @@ class LocalStore extends ChangeNotifier {
     await old?.close().catchError((Object _) {});
   }
 
+  // —— 角色识别(CL Tagger v2.01a)——
+
+  String get _clDefaultDir => '$_home${_sep}models$_sep$clTaggerFolder';
+
+  /// 模型所在的文件夹:用户选了别处已下好的(如旧版的 models\cl-tagger-v2)就用那个。
+  String get clTaggerDir => taggerDir.isNotEmpty ? taggerDir : _clDefaultDir;
+
+  List<String> _clPaths(String dir) => [
+    for (final f in clTaggerFiles) '$dir$_sep${fileName(f)}',
+    '$dir$_sep$characterCsvFile',
+  ];
+
+  bool _clComplete(String dir) => _clPaths(dir).every((p) {
+    final f = File(p);
+    return f.existsSync() && f.lengthSync() > 0;
+  });
+
+  bool get taggerReady => _clComplete(clTaggerDir);
+
+  bool get identifying => _identifying;
+  bool _identifying = false;
+  OnnxModel? _tagger;
+  ClVocabulary? _vocab;
+  CharacterIndex? _index;
+
+  /// 下到默认文件夹;受限仓库要带 [token]。官方会同名覆盖,不校验大小。
+  Future<String?> downloadTagger(String token) async {
+    if (token.trim().isEmpty) return '先填 HuggingFace Token';
+    final dir = _clDefaultDir;
+    final problem = await download(
+      'tagger',
+      [
+        for (final f in clTaggerFiles) (url: hfFileUrl(source, clTaggerRepo, f), path: '$dir$_sep${fileName(f)}', size: null, sha256: null),
+        (url: '${hfSources[source] ?? hfSources['huggingface']}/$characterCsvPath', path: '$dir$_sep$characterCsvFile', size: null, sha256: null),
+      ],
+      headers: {'Authorization': 'Bearer ${token.trim()}'},
+      approxTotal: clTaggerSize,
+    );
+    if (problem == null) update(() => taggerDir = '');
+    return problem;
+  }
+
+  /// 用别处已经下好的(四个文件放在同一个文件夹里)。不全时返回原因。
+  String? useTaggerDir(String dir) {
+    if (!_clComplete(dir)) return '这个文件夹里没有完整的 CL Tagger(要 ${[...clTaggerFiles.map(fileName), characterCsvFile].join('、')})';
+    unawaited(releaseTagger());
+    update(() => taggerDir = dir);
+    return null;
+  }
+
+  /// 识别 [imagePath] 里的角色,连同它们的父 / 子 / 同级标签。第一次要加载 2 GB 的模型,窗口会顿几秒。
+  Future<List<CharacterCandidate>> identify(String imagePath) async {
+    if (!taggerReady) throw const LlmError('先在「本地模型」页下载 CL Tagger');
+    if (_identifying) throw const LlmError('正在识别');
+    _identifying = true;
+    notifyListeners();
+    try {
+      final [model, _, vocab, csv] = _clPaths(clTaggerDir);
+      _vocab ??= await Isolate.run(() => parseClVocabulary(File(vocab).readAsStringSync()));
+      _index ??= await Isolate.run(() => CharacterIndex.parse(File(csv).readAsStringSync()));
+      final tagger = _tagger ??= await OnnxModel.load(model);
+      final rgba = await _decode(await File(imagePath).readAsBytes(), clImageSize);
+      final input = tagger.inputs.where((i) => i.name == 'pixel_values').firstOrNull ?? tagger.inputs.first;
+      final logits = await tagger.run({input.name: (data: clPixels(rgba), shape: const [1, 3, clImageSize, clImageSize])});
+      return expandCandidates(decodeClTags(logits, _vocab!), _index!);
+    } on OnnxException catch (e) {
+      await releaseTagger();
+      throw LlmError(e.message);
+    } finally {
+      _identifying = false;
+      notifyListeners();
+    }
+  }
+
+  /// 放掉模型(2 GB);CHA 弹窗关掉时调。对照表和标签表留着,下次不用再解析。
+  Future<void> releaseTagger() async {
+    final old = _tagger;
+    _tagger = null;
+    await old?.close().catchError((Object _) {});
+  }
+
   // —— 存盘 ——
 
   void update(void Function() change) {
@@ -336,6 +426,7 @@ class LocalStore extends ChangeNotifier {
         'port': port,
         'context': context,
         'gpuLayers': gpuLayers,
+        'taggerDir': taggerDir,
       }));
     } on FileSystemException catch (e) {
       debugPrint('local.json 写入失败:$e');
@@ -353,6 +444,7 @@ class LocalStore extends ChangeNotifier {
       port = j['port'] as int? ?? port;
       context = j['context'] as int? ?? context;
       gpuLayers = j['gpuLayers'] as int? ?? gpuLayers;
+      taggerDir = j['taggerDir'] as String? ?? '';
     } on Object catch (e) {
       debugPrint('local.json 读取失败,用默认设置:$e');
     }
@@ -366,6 +458,7 @@ class LocalStore extends ChangeNotifier {
     }
     unawaited(server.stop());
     unawaited(_dropFlorence());
+    unawaited(releaseTagger());
     super.dispose();
   }
 }

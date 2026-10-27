@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
+import '../../../data/config_store.dart';
 import 'local_section.dart';
 import 'local_store.dart';
 
 /// 「本地模型」页:下载、运行时、选用。和「模型」页的 API 接口分开放。
 class LocalPage extends StatelessWidget {
-  const LocalPage({super.key, required this.local});
+  const LocalPage({super.key, required this.local, required this.config});
 
   final LocalStore local;
+  final ConfigStore config;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -29,7 +31,7 @@ class LocalPage extends StatelessWidget {
             alignment: Alignment.topLeft,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 820),
-              child: LocalSection(local: local),
+              child: LocalSection(local: local, config: config),
             ),
           ),
         ),

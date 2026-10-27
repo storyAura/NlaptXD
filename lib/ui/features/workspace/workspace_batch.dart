@@ -37,6 +37,30 @@ extension WorkspaceBatch on Workspace {
     return applyBatch(atStart ? '前缀' : '后缀', '「${affix.trim()}」${asTag ? ' · 独立标签' : ''}', next);
   }
 
+  /// 「中文全部转为英文」:范围内含中文的文件逐个翻译([perSegment] 时只译含中文的段),
+  /// 全译完再一起写盘(打快照、记日志)。翻译出错的文件不改,算进 failed。
+  Future<({int written, int failed})> translateChineseToEnglish(
+    Scope scope, {
+    required bool perSegment,
+    required Future<String> Function(String text) toEnglish,
+  }) async {
+    final next = <ImageEntry, String>{};
+    var failed = 0;
+    for (final e in scopeEntries(scope)) {
+      final text = textOf(e);
+      if (!hasCjk(text)) continue;
+      try {
+        next[e] = perSegment
+            ? joinSegments([for (final s in splitSegments(text)) hasCjk(s) ? await toEnglish(s) : s])
+            : await toEnglish(text);
+      } on Object {
+        failed++;
+      }
+    }
+    final written = await applyBatch('中文转英文', perSegment ? '分段翻译' : '整段翻译', next);
+    return (written: written, failed: failed);
+  }
+
   /// 把一次批量操作改过的文件恢复成操作前的样子(之后对它们的修改也会被覆盖)。
   Future<int> rollback(int id) async {
     final log = oplog;

@@ -19,8 +19,8 @@ class DatasetPane extends StatelessWidget {
   final Workspace ws;
   final VoidCallback onOpen;
 
-  /// 右键「推标这张图片」。
-  final void Function(int index) onInfer;
+  /// 右键推标:点的是第 [index] 张,推哪些看 [target]。
+  final void Function(int index, InferTarget target) onInfer;
 
   @override
   Widget build(BuildContext context) {
@@ -172,7 +172,7 @@ class _List extends StatelessWidget {
   const _List({required this.ws, required this.onInfer});
 
   final Workspace ws;
-  final void Function(int index) onInfer;
+  final void Function(int index, InferTarget target) onInfer;
 
   List<_Row> _rows() {
     final vis = ws.visible;
@@ -273,26 +273,40 @@ void _pick(Workspace ws, int i) {
   ws.select(i, range: keys.isShiftPressed, remove: keys.isAltPressed);
 }
 
-Future<void> _menu(BuildContext context, Offset at, Workspace ws, int i, void Function(int) onInfer) async {
+/// 右键推标的范围(同旧版 file_panel_infer.py)。
+enum InferTarget { one, selected, folder, folderUnlabeled, all }
+
+Future<void> _menu(BuildContext context, Offset at, Workspace ws, int i, void Function(int, InferTarget) onInfer) async {
   final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
   final p = overlay.globalToLocal(at);
+  final n = ws.selected.length;
+  // 推标进行中只能取消,不能再开一批。
+  final items = ws.job != null
+      ? [('cancel', Icons.stop_circle_outlined, '取消推标')]
+      : [
+          ('one', Icons.auto_awesome_outlined, '推标这张图片'),
+          if (n > 1 && ws.selected.contains(i)) ('selected', Icons.checklist, '推标已选的 $n 张'),
+          ('folder', Icons.folder_outlined, '推标此文件夹'),
+          ('folderUnlabeled', Icons.folder_open_outlined, '推标此文件夹里未标注的'),
+          ('all', Icons.select_all, '推标全部'),
+        ];
   final picked = await showMenu<String>(
     context: context,
     position: RelativeRect.fromLTRB(p.dx, p.dy, p.dx, p.dy),
     items: [
-      for (final (v, icon, label) in [
-        ('infer', Icons.auto_awesome_outlined, '推标这张图片'),
-        ('copy', Icons.content_copy_outlined, '复制标注'),
-      ])
+      for (final (v, icon, label) in [...items, ('copy', Icons.content_copy_outlined, '复制标注')]) ...[
+        if (v == 'copy') const PopupMenuDivider(height: 9),
         PopupMenuItem(
           value: v,
           height: 34,
           child: Row(children: [Icon(icon, size: 15, color: NlColors.slate500), const SizedBox(width: 10), Text(label, style: const TextStyle(fontSize: 13))]),
         ),
+      ],
     ],
   );
-  if (!context.mounted) return;
-  if (picked == 'infer') onInfer(i);
+  if (!context.mounted || picked == null) return;
+  if (picked == 'cancel') return ws.cancelJob();
+  if (InferTarget.values.asNameMap()[picked] case final target?) return onInfer(i, target);
   if (picked == 'copy') {
     await Clipboard.setData(ClipboardData(text: ws.textOf(ws.entries[i])));
     if (context.mounted) showToast(context, '已复制标注');
@@ -317,7 +331,7 @@ class _Item extends StatelessWidget {
 
   final Workspace ws;
   final int index;
-  final void Function(int) onInfer;
+  final void Function(int index, InferTarget target) onInfer;
 
   @override
   Widget build(BuildContext context) {
@@ -381,7 +395,7 @@ class _Tile extends StatelessWidget {
 
   final Workspace ws;
   final int index;
-  final void Function(int) onInfer;
+  final void Function(int index, InferTarget target) onInfer;
 
   @override
   Widget build(BuildContext context) {

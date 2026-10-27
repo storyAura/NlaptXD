@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'package:file_selector/file_selector.dart';
+
 import '../../../core/local/caption_catalog.dart';
+import '../../../core/local/cl_tagger.dart';
 import '../../../core/local/llama_server.dart';
+import '../../../data/config_store.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
@@ -11,9 +15,10 @@ String _gb(int bytes) => '${(bytes / (1 << 30)).toStringAsFixed(1)} GB';
 
 /// 「本地模型」页的内容:llama.cpp 运行时与服务,模型清单(按系列),下载 / 删除 / 选用。
 class LocalSection extends StatelessWidget {
-  const LocalSection({super.key, required this.local});
+  const LocalSection({super.key, required this.local, required this.config});
 
   final LocalStore local;
+  final ConfigStore config;
 
   void _say(BuildContext context, String? problem, String ok) {
     if (context.mounted) showToast(context, problem ?? ok, warn: problem != null);
@@ -36,6 +41,8 @@ class LocalSection extends StatelessWidget {
             ),
           )),
           _runtime(context),
+          const SizedBox(height: 10),
+          _TaggerCard(local: local, config: config, say: (p, ok) => _say(context, p, ok)),
           const SizedBox(height: 10),
           for (final s in series) ...[
             Padding(
@@ -110,7 +117,7 @@ class _Progress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = progress.total == null || progress.total == 0 ? null : progress.received / progress.total!;
+    final p = progress.total == null || progress.total == 0 ? null : (progress.received / progress.total!).clamp(0.0, 1.0);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -129,6 +136,94 @@ class _Progress extends StatelessWidget {
         Text(p == null ? '下载中' : '${(p * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
         NlIconButton(Icons.close, tooltip: '取消(已下的部分保留,可续传)', onPressed: onCancel),
       ],
+    );
+  }
+}
+
+/// CL Tagger v2.01a:CHA 角色卡「识别角色」用。受限模型,要 HuggingFace Token;也可以指向已经下好的文件夹。
+class _TaggerCard extends StatefulWidget {
+  const _TaggerCard({required this.local, required this.config, required this.say});
+
+  final LocalStore local;
+  final ConfigStore config;
+  final void Function(String? problem, String ok) say;
+
+  @override
+  State<_TaggerCard> createState() => _TaggerCardState();
+}
+
+class _TaggerCardState extends State<_TaggerCard> {
+  LocalStore get local => widget.local;
+  ConfigStore get config => widget.config;
+  void say(String? problem, String ok) => widget.say(problem, ok);
+
+  // 下载进度一跳页面就重画,控制器放在这里,输入时光标才不乱跳。
+  late final _token = TextEditingController(text: config.config.hfToken);
+
+  @override
+  void dispose() {
+    _token.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDir() async {
+    final dir = await getDirectoryPath(confirmButtonText: '选择');
+    if (dir != null) say(local.useTaggerDir(dir), 'CL Tagger 已就绪');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = local.taggerReady;
+    final progress = local.progressOf('tagger');
+    return NlCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.face_retouching_natural_outlined, size: 16, color: NlColors.slate700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('角色识别 · CL Tagger v2.01a', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    Text(
+                      ready ? '已就绪 · ${local.clTaggerDir}' : 'CHA 角色卡识别角色名 / 作品名 · 约 ${_gb(clTaggerSize)}',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11.5, color: ready ? NlColors.accent : NlColors.slate500),
+                    ),
+                  ],
+                ),
+              ),
+              if (progress != null)
+                _Progress(progress: progress, onCancel: () => local.cancelDownload('tagger'))
+              else ...[
+                NlButton(label: ready ? '换文件夹' : '选已下好的', icon: Icons.folder_open_outlined, tone: Tone.ghost, onPressed: _pickDir),
+                if (!ready) ...[
+                  const SizedBox(width: 6),
+                  NlButton(
+                    label: '下载',
+                    icon: Icons.download_outlined,
+                    tone: Tone.outline,
+                    onPressed: () async => say(await local.downloadTagger(config.config.hfToken), 'CL Tagger 已就绪'),
+                  ),
+                ],
+              ],
+            ],
+          ),
+          if (!ready) ...[
+            const SizedBox(height: 10),
+            TextField(
+              controller: _token,
+              obscureText: true,
+              style: const TextStyle(fontSize: 12.5),
+              decoration: fieldDecoration('HuggingFace Token(先在模型页同意条款:huggingface.co/$clTaggerRepo)', icon: Icons.key_outlined),
+              onChanged: (v) => config.update(config.config.copyWith(hfToken: v.trim())),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -44,7 +44,7 @@ class _AppShellState extends State<AppShell> {
       WorkspacePage(ws: widget.ws, config: widget.config, local: widget.local, onGo: _go),
       LogPage(ws: widget.ws),
       ModelsPage(config: widget.config, local: widget.local),
-      LocalPage(local: widget.local),
+      LocalPage(local: widget.local, config: widget.config),
       SettingsPage(config: widget.config),
     ];
     return Scaffold(

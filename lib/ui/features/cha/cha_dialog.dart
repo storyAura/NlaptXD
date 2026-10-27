@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/cha.dart';
+import '../../../core/local/character_index.dart';
 import '../../../core/dataset.dart';
 import '../../../data/app_config.dart';
 import '../../core/motion.dart';
@@ -11,6 +12,7 @@ import '../../core/theme.dart';
 import '../../core/widgets.dart';
 import '../local/local_store.dart';
 import '../workspace/engines.dart';
+import '../workspace/gloss_pane.dart';
 
 export 'cha_summary.dart';
 
@@ -39,6 +41,9 @@ class _Slot {
   final errors = List<String>.filled(3, '');
   int pick = -1;
 
+  /// 「识别角色」的结果;null = 还没识别过。
+  List<CharacterCandidate>? found;
+
   void dispose() {
     for (final c in [name, series, ...cands, for (final e in extras) e.label]) {
       c.dispose();
@@ -65,12 +70,96 @@ class _ChaDialogState extends State<_ChaDialog> {
   _Slot get _slot => _slots[_cur];
   List<ImageEntry> get _refs => widget.images.take(40).toList();
 
+  bool _identifying = false;
+
   @override
   void dispose() {
     for (final s in _slots) {
       s.dispose();
     }
+    // CL Tagger 占 2 GB 内存,弹窗关了就放掉。
+    widget.local.releaseTagger();
     super.dispose();
+  }
+
+  /// 用这张卡的主参考图识别角色(CL Tagger),结果连同父 / 子 / 同级标签列在角色名下面。
+  Future<void> _identify(_Slot s) async {
+    setState(() => _identifying = true);
+    try {
+      s.found = await widget.local.identify(_refs[s.ref].imagePath);
+    } on Object catch (e) {
+      if (mounted) showToast(context, '识别失败:$e', warn: true);
+    }
+    if (mounted) setState(() => _identifying = false);
+  }
+
+  void _fill(_Slot s, CharacterCandidate c) => setState(() {
+    s.name.text = c.name;
+    if (c.series.isNotEmpty) s.series.text = c.series;
+  });
+
+  Widget _identifyBox(_Slot s) {
+    final ready = widget.local.taggerReady;
+    final found = s.found;
+    final caption = TextStyle(fontSize: 11, color: NlColors.slate400);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        NlButton(
+          label: _identifying ? '识别中…' : '识别角色',
+          icon: Icons.face_retouching_natural_outlined,
+          tone: Tone.outline,
+          busy: _identifying,
+          onPressed: ready && !_identifying ? () => _identify(s) : null,
+        ),
+        if (!ready) Padding(padding: const EdgeInsets.only(top: 4), child: Text('在「本地模型」页下载 CL Tagger 后可用', style: caption)),
+        if (found != null && found.isEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text('未识别出已知角色', style: caption)),
+        if (found != null && found.isNotEmpty)
+          PopIn(
+            key: ValueKey(found),
+            child: Container(
+              margin: const EdgeInsets.only(top: 8),
+              constraints: const BoxConstraints(maxHeight: 220),
+              decoration: BoxDecoration(border: Border.all(color: NlColors.border), borderRadius: BorderRadius.circular(8)),
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.all(4),
+                children: [for (final c in found) _candidate(s, c)],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _candidate(_Slot s, CharacterCandidate c) {
+    final on = s.name.text == c.name;
+    final detail = [
+      c.relation == CharacterRelation.detected ? '${(c.prob * 100).round()}%' : c.relation.label,
+      if (c.series.isNotEmpty) c.series,
+    ].join(' · ');
+    return Hover(
+      cursor: SystemMouseCursors.click,
+      builder: (hover) => GestureDetector(
+        onTap: () => _fill(s, c),
+        child: AnimatedContainer(
+          duration: Motion.snap,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: on ? NlColors.primaryBg : hover ? NlColors.slate100 : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(c.name, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: on ? NlColors.primary : NlColors.text)),
+              Text(detail, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: NlColors.slate500)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   bool get _canGenerate => _slots.every((s) => s.name.text.trim().isNotEmpty);
@@ -144,6 +233,7 @@ class _ChaDialogState extends State<_ChaDialog> {
     child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 980, maxHeight: 700),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _header(),
           Divider(height: 1, color: NlColors.border),
@@ -160,7 +250,7 @@ class _ChaDialogState extends State<_ChaDialog> {
               child: KeyedSubtree(
                 key: ValueKey('$_step/$_cur'),
                 child: Padding(
-                  padding: const EdgeInsets.all(18),
+                  padding: const EdgeInsets.fromLTRB(22, 16, 22, 16),
                   child: switch (_step) {
                     1 => _stepRoles(),
                     2 => _stepCards(),
@@ -177,7 +267,7 @@ class _ChaDialogState extends State<_ChaDialog> {
   );
 
   Widget _header() => Padding(
-    padding: const EdgeInsets.fromLTRB(18, 14, 10, 14),
+    padding: const EdgeInsets.fromLTRB(22, 14, 12, 14),
     child: Row(
       children: [
         const Text('CHA标注', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
@@ -211,10 +301,10 @@ class _ChaDialogState extends State<_ChaDialog> {
   );
 
   Widget _slotTabs() => Padding(
-    padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+    padding: const EdgeInsets.fromLTRB(22, 14, 22, 0),
     child: Wrap(
-      spacing: 6,
-      runSpacing: 6,
+      spacing: 8,
+      runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         for (final (i, s) in _slots.indexed)
@@ -250,14 +340,20 @@ class _ChaDialogState extends State<_ChaDialog> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
+        SizedBox(
+          width: 260,
           child: ListView(
             children: [
               field('角色名 · 必填', s.name, '如 Suzukaze Aoba'),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
+              _identifyBox(s),
+              const SizedBox(height: 14),
               field('作品名', s.series, '如 New Game!'),
-              const SizedBox(height: 16),
-              Label('多图参考', trailing: Text('背面、武器、发饰特写…', style: TextStyle(fontSize: 11, color: NlColors.slate400))),
+              const SizedBox(height: 22),
+              Text('多图参考', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+              const SizedBox(height: 2),
+              Text('背面、武器、发饰特写…', style: TextStyle(fontSize: 11, color: NlColors.slate400)),
+              const SizedBox(height: 8),
               for (final (i, e) in s.extras.indexed)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
@@ -278,16 +374,17 @@ class _ChaDialogState extends State<_ChaDialog> {
             ],
           ),
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 24),
         Expanded(
-          flex: 6,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Label('主参考图'),
+              Label('主参考图', trailing: Text('点一张代表这个角色', style: TextStyle(fontSize: 11, color: NlColors.slate400))),
               Expanded(
                 child: GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 110, childAspectRatio: 3 / 4, mainAxisSpacing: 8, crossAxisSpacing: 8),
+                  // 留边:选中图外圈的光晕不被网格边缘切掉。
+                  padding: const EdgeInsets.all(4),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 124, childAspectRatio: 3 / 4, mainAxisSpacing: 12, crossAxisSpacing: 12),
                   itemCount: _refs.length,
                   itemBuilder: (_, i) => GestureDetector(
                     onTap: () => setState(() => s.ref = i),
@@ -362,6 +459,12 @@ class _ChaDialogState extends State<_ChaDialog> {
                         ),
                       },
                     ),
+                    // 中文只对照(同旧版):英文才是写进标注的。
+                    if (s.status[v] == _Status.done)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: GlossPane(text: s.cands[v].text, translator: translatorFor(cfg)),
+                      ),
                     const SizedBox(height: 8),
                     NlButton(
                       label: s.pick == v ? '已选定' : '选定这套',
@@ -428,7 +531,7 @@ class _ChaDialogState extends State<_ChaDialog> {
       _ => true,
     };
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+      padding: const EdgeInsets.fromLTRB(22, 12, 22, 12),
       decoration: BoxDecoration(color: NlColors.slate50, border: Border(top: BorderSide(color: NlColors.border))),
       child: Row(
         children: [

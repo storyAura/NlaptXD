@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nlaptxd/core/llm/api_profile.dart';
 import 'package:nlaptxd/core/llm/openai_client.dart';
+import 'package:nlaptxd/core/llm/translate.dart';
 import 'package:nlaptxd/data/app_config.dart';
 import 'package:nlaptxd/data/legacy_import.dart';
 
@@ -16,6 +17,8 @@ Map<String, dynamic> _profile(String name, String type, String url, List<String>
 };
 
 final _api = <String, dynamic>{
+  'huggingface': {'token': ' hf_fake '},
+  'translate': {'deeplx_url': 'https://dx.example/k/translate', 'deeplx_token': '', 'baidu_appid': ''},
   'llm': {
     'profiles': [
       _profile('aihubmix', 'openai', 'https://aihubmix.com/v1', ['flash']),
@@ -23,6 +26,7 @@ final _api = <String, dynamic>{
       _profile('vertex', 'gemini', 'https://aiplatform.googleapis.com/v1', ['argon']),
     ],
     'vision_target': {'profile': 'aihubmix', 'model': 'flash'},
+    'text_target': {'profile': 'openrouter', 'model': 'muse'},
   },
 };
 final _cha = <String, dynamic>{
@@ -41,7 +45,11 @@ final _prompts = <String, dynamic>{
 
 void main() {
   test('imports profiles, picked models, targets and the active system prompt', () {
-    final c = importLegacy(const AppConfig(), api: _api, cha: _cha, prompts: _prompts);
+    final c = importLegacy(const AppConfig(), api: _api, cha: _cha, prompts: _prompts, app: {'request': {'concurrency': 20}},
+        translate: {'provider': 'deeplx', 'fallback_order': ['google', 'local_mt']});
+    expect((c.translate.service, c.translate.fallbacks.single, c.translate.deeplxUrl), (TranslateService.deeplx, TranslateService.google, 'https://dx.example/k/translate'));
+    expect(c.textModel, const ModelRef('nlapt-openrouter', 'muse'));
+    expect(c.parallel, 20);
     expect([for (final p in c.profiles) (p.name, p.baseUrl, p.models.join(','), p.enabled, p.apiKey)], [
       ('aihubmix', 'https://aihubmix.com/v1', 'flash', true, 'sk-aihubmix'),
       ('openrouter', 'https://openrouter.ai/api/v1', 'muse', true, 'sk-openrouter'),
@@ -50,9 +58,13 @@ void main() {
     expect(c.vision, const ModelRef('nlapt-aihubmix', 'flash'));
     expect(c.chaCards, [const ModelRef('nlapt-vertex', 'argon'), const ModelRef('nlapt-aihubmix', 'flash'), null]);
     expect(c.chaScene, const ModelRef('nlapt-openrouter', 'muse'));
+    expect(c.systemPrompts, {'中文': '你是一个图像分析系统。', 'other': 'x'});
+    expect(c.systemName, '中文');
     expect(c.system, '你是一个图像分析系统。');
+    expect(c.systemNames, ['结构化视觉编译', '客观视觉报告', '中文', 'other']);
     expect(c.prompt, defaultVisionPrompt);
-    expect(c.legacyImported, isTrue);
+    expect(c.hfToken, 'hf_fake');
+    expect(c.legacyImport, legacyImportVersion);
   });
 
   test('fills only empty slots and skips profiles already imported', () {
@@ -60,19 +72,31 @@ void main() {
     final cur = AppConfig(
       profiles: const [ApiProfile(id: 'nlapt-aihubmix', name: 'renamed', baseUrl: 'u', apiKey: 'k')],
       vision: mine,
-      system: 'keep me',
+      systemPrompts: const {'中文': 'keep me'},
+      systemName: '客观视觉报告',
       prompt: 'my prompt',
     );
     final c = importLegacy(cur, api: _api, cha: _cha, prompts: {..._prompts, 'user_prompt': 'old user'});
     expect([for (final p in c.profiles) p.name], ['renamed', 'openrouter', 'vertex']);
     expect(c.vision, mine);
-    expect(c.system, 'keep me');
+    expect(c.systemPrompts, {'中文': 'keep me', 'other': 'x'});
+    expect(c.systemName, '客观视觉报告');
     expect(c.prompt, 'my prompt');
+  });
+
+  test('step 2 only adds the presets and gives the single imported prompt its old name back', () {
+    // 第 1 步导入时(旧版本)只存了一条 system,读进来是「系统提示词」方案。
+    final cur = AppConfig.fromJson({'system': '你是一个图像分析系统。', 'legacyImported': true});
+    expect((cur.systemName, cur.legacyImport), ('系统提示词', 1));
+    final c = importLegacy(cur, api: _api, cha: _cha, prompts: _prompts);
+    expect(c.profiles, isEmpty);
+    expect(c.systemPrompts, {'中文': '你是一个图像分析系统。', 'other': 'x'});
+    expect(c.systemName, '中文');
   });
 
   test('missing files still mark the import done', () {
     final c = importLegacy(const AppConfig());
     expect(c.profiles, isEmpty);
-    expect(c.legacyImported, isTrue);
+    expect(c.legacyImport, legacyImportVersion);
   });
 }

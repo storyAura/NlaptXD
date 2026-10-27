@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/dataset.dart';
 import '../../../data/config_store.dart';
 import '../local/local_store.dart';
 import '../../core/motion.dart';
@@ -60,11 +61,36 @@ class _WorkspacePageState extends State<WorkspacePage> {
     }
   }
 
-  Future<void> _inferAt(int i) async {
-    ws.select(i);
+  /// 右键推标(用视觉模型):这一张先预览再采纳;一批的话,已有标注的先问一声,再打快照写盘。
+  Future<void> _inferAt(int i, InferTarget target) async {
     final cfg = widget.config.config;
-    final err = await ws.inferCurrent(llmCaptioner(cfg, widget.local), modelLabel(cfg.vision, widget.local));
-    if (err != null && mounted) showToast(context, err, warn: true);
+    final run = llmCaptioner(cfg, widget.local);
+    // 「已选」不能改选择;其余范围按点的这张算文件夹。
+    if (target != InferTarget.selected) ws.select(i);
+    if (target == InferTarget.one) {
+      final err = await ws.inferCurrent(run, modelLabel(cfg.vision, widget.local));
+      if (err != null && mounted) showToast(context, err, warn: true);
+      return;
+    }
+    if (run == null) return showToast(context, '还没有视觉模型 · 去「模型」页添加', warn: true);
+    bool labeled(ImageEntry e) => ws.textOf(e).trim().isNotEmpty;
+    final list = switch (target) {
+      InferTarget.selected => ws.scopeEntries(Scope.selected),
+      InferTarget.folderUnlabeled => [for (final e in ws.scopeEntries(Scope.folder)) if (!labeled(e)) e],
+      InferTarget.all => ws.entries,
+      _ => ws.scopeEntries(Scope.folder),
+    };
+    if (list.isEmpty) return showToast(context, '这里没有要推标的图', warn: true);
+    final over = list.where(labeled).length;
+    if (over > 0 &&
+        !await confirmDialog(context, '覆盖 $over 张已有标注?', '共 ${list.length} 张。写盘前会打快照,可以在操作日志里整批回滚。', ok: '推标')) {
+      return;
+    }
+    final err = await ws.startBatch(Scope.all, run, list: list, parallel: cfg.parallel);
+    final j = ws.lastJob;
+    if (!mounted) return;
+    if (err != null) return showToast(context, err, warn: true);
+    if (j != null) showToast(context, j.summary, warn: j.failed > 0);
   }
 
   @override
@@ -161,7 +187,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                     ),
                     DecoratedBox(
                       decoration: BoxDecoration(border: Border(top: BorderSide(color: NlColors.border))),
-                      child: SizedBox(height: h, child: CaptionEditor(ws: ws)),
+                      child: SizedBox(height: h, child: CaptionEditor(ws: ws, config: widget.config)),
                     ),
                   ],
                 );

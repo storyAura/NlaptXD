@@ -7,7 +7,8 @@ import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
 import '../local/local_store.dart';
-import '../workspace/engines.dart';
+import 'translate_card.dart';
+import 'usage_card.dart';
 
 /// 模型:左边接口卡片,右边「用途」(推标、CHA 各用哪个模型,提示词)。
 class ModelsPage extends StatelessWidget {
@@ -37,7 +38,7 @@ class ModelsPage extends StatelessWidget {
             children: [
               const Text('模型', style: TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(width: 10),
-              Text('接口 · 用途', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
+              Text('接口 · 用途 · 翻译', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
             ],
           ),
           Expanded(
@@ -66,7 +67,16 @@ class ModelsPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 18),
-                  Expanded(child: _Usage(config: config, local: local)),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        UsageCard(config: config, local: local),
+                        const SizedBox(height: 12),
+                        TranslateCard(config: config),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -248,154 +258,6 @@ class _ProfileCardState extends State<_ProfileCard> {
                 ),
               ),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Usage extends StatefulWidget {
-  const _Usage({required this.config, required this.local});
-
-  final ConfigStore config;
-  final LocalStore local;
-
-  @override
-  State<_Usage> createState() => _UsageState();
-}
-
-class _UsageState extends State<_Usage> {
-  late final _prompt = TextEditingController(text: widget.config.config.prompt);
-  late final _system = TextEditingController(text: widget.config.config.system);
-
-  @override
-  void dispose() {
-    _prompt.dispose();
-    _system.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cfg = widget.config.config;
-    final names = {for (final p in cfg.profiles) p.id: p.name};
-    final dirty = _prompt.text != cfg.prompt || _system.text != cfg.system;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Label('用途'),
-        NlCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('视觉 · 推标', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<ModelRef>(
-                // 换了 key 才会按新值重建(FormField 只在创建时读 initialValue)。
-                key: ValueKey('vision/${cfg.vision?.profileId}/${cfg.vision?.model}'),
-                initialValue: cfg.pool.contains(cfg.vision) ? cfg.vision : null,
-                isExpanded: true,
-                hint: Text(cfg.pool.isEmpty ? '先在左边添加接口并勾选模型' : '选择模型', style: const TextStyle(fontSize: 12.5)),
-                decoration: fieldDecoration(''),
-                style: uiFont.copyWith(fontSize: 12.5, color: NlColors.text),
-                items: [
-                  for (final r in cfg.pool)
-                    DropdownMenuItem(value: r, child: Text('${names[r.profileId]} · ${r.model}', overflow: TextOverflow.ellipsis)),
-                ],
-                onChanged: (r) => widget.config.update(cfg.copyWith(vision: r)),
-              ),
-              const SizedBox(height: 14),
-              Text('推标提示词', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
-              const SizedBox(height: 6),
-              TextField(controller: _prompt, maxLines: 5, minLines: 3, style: monoStyle, onChanged: (_) => setState(() {}), decoration: fieldDecoration('')),
-              const SizedBox(height: 10),
-              Text('系统提示词 · 可留空', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
-              const SizedBox(height: 6),
-              TextField(controller: _system, maxLines: 4, minLines: 2, style: monoStyle, onChanged: (_) => setState(() {}), decoration: fieldDecoration('')),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  NlButton(
-                    label: '恢复默认',
-                    tone: Tone.ghost,
-                    onPressed: () => setState(() => _prompt.text = defaultVisionPrompt),
-                  ),
-                  const Spacer(),
-                  NlButton(
-                    label: '保存',
-                    tone: Tone.primary,
-                    onPressed: dirty
-                        ? () async {
-                            await widget.config.update(cfg.copyWith(prompt: _prompt.text, system: _system.text));
-                            if (context.mounted) showToast(context, '已保存');
-                            setState(() {});
-                          }
-                        : null,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        NlCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('CHA标注 · 留空沿用视觉模型', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
-              for (var i = 0; i < 3; i++)
-                _slot('候选 ${i + 1}', cfg.chaCards[i], (r) {
-                  final cards = [...cfg.chaCards]..[i] = r;
-                  widget.config.update(cfg.copyWith(chaCards: cards));
-                }),
-              _slot('整批画面', cfg.chaScene, (r) => widget.config.update(cfg.copyWith(chaScene: (r,)))),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// 一个 CHA 模型位:沿用视觉模型 / 模型池里任一个 / 本地 GGUF 模型。
-  Widget _slot(String label, ModelRef? value, ValueChanged<ModelRef?> onChanged) {
-    final cfg = widget.config.config;
-    final names = {for (final p in cfg.profiles) p.id: p.name};
-    final local = widget.local.picked;
-    final options = <ModelRef?>[
-      null,
-      ...cfg.pool,
-      if (local != null && !local.florence && widget.local.installed(local)) const ModelRef(localProfileId, ''),
-    ];
-    final current = options.contains(value) ? value : null;
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Row(
-        children: [
-          SizedBox(width: 72, child: Text(label, style: TextStyle(fontSize: 12, color: NlColors.slate500))),
-          Expanded(
-            child: DropdownButtonFormField<ModelRef?>(
-              key: ValueKey('$label/${current?.profileId}/${current?.model}'),
-              initialValue: current,
-              isExpanded: true,
-              decoration: fieldDecoration(''),
-              style: uiFont.copyWith(fontSize: 12.5, color: NlColors.text),
-              items: [
-                for (final r in options)
-                  DropdownMenuItem(
-                    value: r,
-                    child: Text(
-                      r == null
-                          ? '沿用视觉模型'
-                          : r.profileId == localProfileId
-                          ? modelLabel(r, widget.local)
-                          : '${names[r.profileId]} · ${r.model}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-              onChanged: onChanged,
-            ),
           ),
         ],
       ),

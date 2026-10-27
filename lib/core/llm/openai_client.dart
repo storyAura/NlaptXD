@@ -66,6 +66,20 @@ class OpenAiClient {
     return text;
   }
 
+  /// 只发文字(翻译用)。
+  Future<String> chat({required String model, required String prompt, String system = ''}) async {
+    final reply = await _send('POST', '/chat/completions', {
+      'model': model,
+      'messages': [
+        if (system.trim().isNotEmpty) {'role': 'system', 'content': system},
+        {'role': 'user', 'content': prompt},
+      ],
+    });
+    final text = _content(reply).trim();
+    if (text.isEmpty) throw LlmError('${profile.name} 返回了空内容');
+    return text;
+  }
+
   /// 「测试连接」:发一句最短的话,返回耗时。
   Future<Duration> ping(String model) async {
     final watch = Stopwatch()..start();

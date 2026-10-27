@@ -45,7 +45,7 @@ Future<void> main() async {
   await config.load();
   // 第一次启动时把旧版 NLapt 的接口、提示词并进来;试用(NLAPTXD_HOME)时不导,免得把真实密钥带进临时目录。
   final appData = Platform.environment['APPDATA'] ?? '';
-  if (override.isEmpty && !config.config.legacyImported && appData.isNotEmpty) {
+  if (override.isEmpty && config.config.legacyImport < legacyImportVersion && appData.isNotEmpty) {
     await config.update(await importLegacyFiles(config.config, documents: documents, appData: appData));
   }
   NlColors.useDark(config.config.darkMode);

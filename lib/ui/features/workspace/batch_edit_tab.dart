@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/text_ops.dart';
+import '../../../data/config_store.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
 import 'side_panel.dart';
+import 'translate_section.dart';
 import 'workspace.dart';
 
-/// 批量修改:查找替换、前缀 / 后缀。都写盘、都能在操作日志整批回滚。
+/// 批量修改:查找替换、前缀 / 后缀、翻译对照。都写盘、都能在操作日志整批回滚。
 class BatchEditTab extends StatefulWidget {
-  const BatchEditTab({super.key, required this.ws, required this.onGoLog});
+  const BatchEditTab({super.key, required this.ws, required this.config, required this.onGoLog});
 
   final Workspace ws;
+  final ConfigStore config;
   final VoidCallback onGoLog;
 
   @override
@@ -137,6 +140,26 @@ class _BatchEditTabState extends State<BatchEditTab> {
                 ],
               ),
             ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        PopIn(
+          delay: const Duration(milliseconds: 80),
+          child: TranslateSection(
+            ws: ws,
+            config: widget.config,
+            scope: _scope,
+            onWritten: (n, failed) {
+              if (!mounted) return;
+              if (n == 0 && failed == 0) return showToast(context, '范围内没有要翻译的中文', warn: true);
+              final id = n == 0 ? null : ws.oplog!.records.first.id;
+              showToast(
+                context,
+                ['已写入 $n 个文件', if (failed > 0) '$failed 个翻译失败、未改'].join(' · '),
+                warn: failed > 0,
+                action: id == null ? null : ('整批撤销', () => ws.rollback(id)),
+              );
+            },
           ),
         ),
         const SizedBox(height: 12),

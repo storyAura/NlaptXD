@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nlaptxd/app.dart';
@@ -74,6 +75,19 @@ void main() {
     await pump(tester);
     await tester.tap(find.text('推标当前图片'));
     await tester.pumpAndSettle();
+    expect(find.textContaining('还没有视觉模型'), findsOneWidget);
+  });
+
+  testWidgets('right-click offers infer scopes; without a model it says so before asking to overwrite', (tester) async {
+    await pump(tester);
+    await tester.tap(find.text('b.png').first, buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    for (final t in ['推标这张图片', '推标此文件夹', '推标此文件夹里未标注的', '推标全部', '复制标注']) {
+      expect(find.text(t), findsOneWidget, reason: t);
+    }
+    await tester.tap(find.text('推标全部'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('覆盖'), findsNothing);
     expect(find.textContaining('还没有视觉模型'), findsOneWidget);
   });
 

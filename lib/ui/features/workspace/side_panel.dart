@@ -90,7 +90,7 @@ class _SidePanelState extends State<SidePanel> {
               key: ValueKey(_tab),
               child: switch (_tab) {
                 _Tab.infer => InferTab(ws: widget.ws, config: widget.config, local: widget.local, onGoModels: widget.onGoModels),
-                _Tab.edit => BatchEditTab(ws: widget.ws, onGoLog: widget.onGoLog),
+                _Tab.edit => BatchEditTab(ws: widget.ws, config: widget.config, onGoLog: widget.onGoLog),
                 _Tab.history => HistoryTab(ws: widget.ws, onGoLog: widget.onGoLog),
               },
             ),

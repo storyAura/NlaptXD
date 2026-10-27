@@ -5,9 +5,15 @@ import 'package:flutter/services.dart';
 
 import '../../../core/captions.dart';
 import '../../../core/dataset.dart';
+import '../../../core/llm/openai_client.dart';
+import '../../../core/llm/translate.dart';
+import '../../../data/config_store.dart';
 import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
+import 'diff_card.dart';
+import 'engines.dart';
+import 'gloss_pane.dart';
 import 'workspace.dart';
 
 /// kohya 文件夹 `10_aoba` 的触发词 `aoba`;正则集 `1_reg` 没有。
@@ -20,9 +26,12 @@ String triggerOf(ImageEntry e) {
 
 /// 中栏下半:胶囊 / 分句 / 文本三种看法,改的是同一份标注。
 class CaptionEditor extends StatefulWidget {
-  const CaptionEditor({super.key, required this.ws});
+  const CaptionEditor({super.key, required this.ws, required this.config});
 
   final Workspace ws;
+
+  /// 翻译服务从这里取。
+  final ConfigStore config;
 
   @override
   State<CaptionEditor> createState() => _CaptionEditorState();
@@ -47,6 +56,49 @@ class _CaptionEditorState extends State<CaptionEditor> {
   int _sel = -1;
   int _editing = -1;
   String? _key;
+  bool _translating = false;
+
+  /// 底部钉一条中文译文(只对照)。
+  bool _gloss = false;
+  final _translateKey = GlobalKey();
+
+  Translator get _translator => translatorFor(widget.config.config);
+
+  /// 翻译 [text] 成 [lang],结果先预览(红绿对比),采纳才写。
+  Future<void> _translate(String text, String lang, String label, String Function(String out) build) async {
+    if (_translating || text.trim().isEmpty) return;
+    setState(() => _translating = true);
+    try {
+      final out = await _translator.translate(text, lang);
+      ws.proposeTranslation(build(out), label);
+    } on LlmError catch (e) {
+      if (mounted) showToast(context, e is TranslateConfigError ? '${e.message} · 去「模型」页的翻译设置' : e.message, warn: true);
+    }
+    if (mounted) setState(() => _translating = false);
+  }
+
+  /// 「翻译 ▾」:整篇译成中 / 英 / 日。
+  Future<void> _translateMenu(String text) async {
+    final box = _translateKey.currentContext!.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final at = box.localToGlobal(box.size.bottomLeft(Offset.zero), ancestor: overlay);
+    final lang = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(at.dx, at.dy + 4, at.dx, at.dy),
+      items: [
+        for (final MapEntry(:key, :value) in translateLangs.entries)
+          PopupMenuItem(value: key, height: 34, child: Text('整篇译成$value', style: const TextStyle(fontSize: 13))),
+      ],
+    );
+    if (lang != null) await _translate(text, lang, '翻译为${translateLangs[lang]}', (out) => out);
+  }
+
+  /// 胶囊工具条的「翻译」:这一段中英互转,其余段不动。
+  void _translateSegment(int i) {
+    final segs = splitSegments(ws.textOf(ws.entry!));
+    final lang = autoTarget(segs[i]);
+    _translate(segs[i], lang, '翻译片段为${translateLangs[lang]}', (out) => joinSegments([...segs]..[i] = out));
+  }
 
   @override
   void initState() {
@@ -108,6 +160,8 @@ class _CaptionEditorState extends State<CaptionEditor> {
     if (!_textFocus.hasFocus && _text.text != text) _text.text = text;
     final segs = splitSegments(text);
     if (_sel >= segs.length) _sel = -1;
+    // 这张图的翻译结果在编辑器底部预览(推理结果在右栏)。
+    final translated = ws.pending?.translated == true && ws.pending?.key == e.key ? ws.pending : null;
     // 工具条画在最上层的 Overlay 里,不跟着页面淡出:标注台不是当前页时(TickerMode 关着)不画。
     final pageActive = TickerMode.valuesOf(context).enabled;
 
@@ -151,6 +205,21 @@ class _CaptionEditorState extends State<CaptionEditor> {
                 ),
               ),
             ),
+            AnimatedSize(
+              duration: Motion.of(context, Motion.base),
+              curve: Motion.expand,
+              alignment: Alignment.topCenter,
+              child: translated != null
+                  ? ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 260),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(10),
+                        child: PopIn(key: ValueKey(translated), child: DiffCard(ws: ws, result: translated)),
+                      ),
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+            if (_gloss) GlossPane(text: text, translator: _translator),
           ],
         ),
       ),
@@ -173,6 +242,16 @@ class _CaptionEditorState extends State<CaptionEditor> {
         const SizedBox(width: 10),
         Text('${text.length} 字符 · $n 段', style: TextStyle(fontSize: 11.5, color: NlColors.slate500)),
         const Spacer(),
+        NlButton(
+          key: _translateKey,
+          label: _translating ? '翻译中…' : '翻译',
+          icon: Icons.translate,
+          tone: Tone.ghost,
+          busy: _translating,
+          onPressed: text.trim().isEmpty || _translating ? null : () => _translateMenu(text),
+        ),
+        NlChip(label: '译文', selected: _gloss, onTap: () => setState(() => _gloss = !_gloss)),
+        const SizedBox(width: 4),
         NlButton(
           label: '复制',
           icon: Icons.content_copy_outlined,
@@ -217,6 +296,7 @@ class _CaptionEditorState extends State<CaptionEditor> {
             setState(() => _sel = _editing = i + 1);
           }),
           b(Icons.edit_outlined, '编辑', () => setState(() => _editing = i)),
+          b(Icons.translate, '翻译', _translating ? null : () => _translateSegment(i)),
           b(Icons.west, '', i > 0 ? () => _move(i, i - 1) : null),
           b(Icons.east, '', i < count - 1 ? () => _move(i, i + 1) : null),
           b(Icons.delete_outline, '删除', () => _delete(i), danger: true),
