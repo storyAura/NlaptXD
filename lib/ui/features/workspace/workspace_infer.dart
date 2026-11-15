@@ -183,6 +183,29 @@ extension WorkspaceInfer on Workspace {
     return null;
   }
 
+  /// 记一次 CHA 标注:每张卡的卡文和写进去的图。一张都没推就不记;记不下来不挡汇总。
+  Future<void> recordChaRun(InferJob j, List<ChaCard> roster, Map<int, List<ImageEntry>> hits, String model) async {
+    final data = dataDir;
+    if (data == null || j.done == 0) return;
+    try {
+      chaRuns = await appendChaRun(data, (
+        time: j.started,
+        model: model,
+        cards: [
+          for (final (i, c) in roster.indexed)
+            (name: c.name, series: c.series, text: c.text, images: [for (final e in hits[i] ?? const <ImageEntry>[]) if (j.changes.containsKey(e)) relImage(e)]),
+        ],
+        written: j.changes.length,
+        skipped: j.skipped.length,
+        failed: j.failed,
+        cancelled: j.cancelled,
+      ));
+      changed();
+    } on Object catch (err) {
+      debugPrint('记 CHA 标注失败:$err');
+    }
+  }
+
   void cancelJob() {
     job?.cancelled = true;
     changed();

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'cha.dart';
 import 'text_io.dart';
@@ -64,4 +65,67 @@ Future<({DateTime time, List<SavedCard> cards})?> loadChaCards(Directory data, D
   } on Object {
     return null;
   }
+}
+
+/// 一次 CHA 标注里的一张卡:卡文和匹配到的图(相对数据集根目录)。
+typedef ChaRunCard = ({String name, String series, String text, List<String> images});
+
+/// 一次 CHA 标注的记录。
+typedef ChaRun = ({DateTime time, String model, List<ChaRunCard> cards, int written, int skipped, int failed, bool cancelled});
+
+const chaRunsKeep = 30;
+
+File _runsFile(Directory data) => File('${data.path}${Platform.pathSeparator}cha_runs.json');
+
+/// 读每次 CHA 标注的记录(旧的在前)。读不到或读坏了返回空表。
+Future<List<ChaRun>> loadChaRuns(Directory data) async {
+  try {
+    final f = _runsFile(data);
+    if (!await f.exists()) return const [];
+    String s(Object? v) => v is String ? v : '';
+    int n(Object? v) => v is int ? v : 0;
+    return [
+      for (final r in jsonDecode(await f.readAsString()) as List)
+        if (r is Map)
+          (
+            time: DateTime.tryParse(s(r['time'])) ?? DateTime(2000),
+            model: s(r['model']),
+            cards: [
+              for (final c in r['cards'] as List? ?? const [])
+                if (c is Map)
+                  (name: s(c['name']), series: s(c['series']), text: s(c['text']), images: [for (final i in c['images'] as List? ?? const []) s(i)]),
+            ],
+            written: n(r['written']),
+            skipped: n(r['skipped']),
+            failed: n(r['failed']),
+            cancelled: r['cancelled'] == true,
+          ),
+    ];
+  } on Object {
+    return const [];
+  }
+}
+
+/// 把 [run] 加到记录末尾,只留最近 [chaRunsKeep] 次。返回新的整张表。
+Future<List<ChaRun>> appendChaRun(Directory data, ChaRun run) async {
+  final all = [...await loadChaRuns(data), run];
+  final kept = all.sublist(math.max(0, all.length - chaRunsKeep));
+  await writeAtomic(
+    _runsFile(data).path,
+    const JsonEncoder.withIndent('  ').convert([
+      for (final r in kept)
+        {
+          'time': r.time.toIso8601String(),
+          'model': r.model,
+          'written': r.written,
+          'skipped': r.skipped,
+          'failed': r.failed,
+          'cancelled': r.cancelled,
+          'cards': [
+            for (final c in r.cards) {'name': c.name, 'series': c.series, 'text': c.text, 'images': c.images},
+          ],
+        },
+    ]),
+  );
+  return List.unmodifiable(kept);
 }

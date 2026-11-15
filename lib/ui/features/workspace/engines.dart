@@ -72,8 +72,8 @@ CaptionFn jsonCaptioner(JsonFormat format, VisionAsk ask) => (ImageEntry e) asyn
 };
 
 /// CHA 逐张推标:一次请求同时判定属于哪几张卡、核对服装、写画面段。
-/// [counts] 累计每张卡匹配到几张图(给结束时的汇总用)。
-CaptionFn chaCaptioner(List<ChaCard> roster, VisionAsk ask, Map<int, int> counts) {
+/// [hits] 记下每张卡匹配到哪些图(给结束时的汇总和 CHA 记录用)。
+CaptionFn chaCaptioner(List<ChaCard> roster, VisionAsk ask, Map<int, List<ImageEntry>> hits) {
   final prompt = buildScenePrompt(roster);
   final refPaths = rosterReferencePaths(roster);
   return (ImageEntry e) async {
@@ -81,7 +81,7 @@ CaptionFn chaCaptioner(List<ChaCard> roster, VisionAsk ask, Map<int, int> counts
     final verdict = parseReply(await ask(prompt: prompt, images: images), roster.length);
     final caption = assembleCaption(roster, verdict);
     for (final i in verdict.matched) {
-      counts[i] = (counts[i] ?? 0) + 1;
+      (hits[i] ??= []).add(e);
     }
     return caption;
   };

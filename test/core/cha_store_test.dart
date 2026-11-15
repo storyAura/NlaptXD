@@ -44,4 +44,27 @@ void main() {
       ..writeAsStringSync('{oops');
     expect(await loadChaCards(data, root), isNull);
   });
+
+  test('CHA runs: appended in order, only the newest chaRunsKeep kept, broken file reads as empty', () async {
+    ChaRun run(int i) => (
+      time: DateTime(2026, 11, 16, 10, i),
+      model: 'm$i',
+      cards: [(name: 'Si', series: 'Arknights', text: 'card $i', images: ['a/1.png'])],
+      written: i,
+      skipped: 1,
+      failed: 0,
+      cancelled: i.isOdd,
+    );
+    for (var i = 0; i < chaRunsKeep + 2; i++) {
+      await appendChaRun(data, run(i));
+    }
+    final back = await loadChaRuns(data);
+    expect(back.length, chaRunsKeep);
+    expect(back.first.model, 'm2');
+    expect(back.last.cards.single.text, 'card ${chaRunsKeep + 1}');
+    expect(back.last.cards.single.images, ['a/1.png']);
+    expect(back.last.cancelled, isTrue);
+    File('${data.path}/cha_runs.json').writeAsStringSync('{bad');
+    expect(await loadChaRuns(data), isEmpty);
+  });
 }

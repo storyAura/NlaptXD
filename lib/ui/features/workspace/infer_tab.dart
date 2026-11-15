@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/dataset.dart';
 import '../../../core/json_caption.dart';
 import '../../../core/llm/api_profile.dart';
 import '../../../core/local/florence.dart';
@@ -8,6 +9,7 @@ import '../../core/motion.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
 import '../cha/cha_dialog.dart';
+import '../cha/cha_runs_dialog.dart';
 import '../local/local_store.dart';
 import 'diff_card.dart';
 import 'engines.dart';
@@ -86,13 +88,16 @@ class _InferTabState extends State<InferTab> {
     if (scene != (cfg.chaScene ?? cfg.vision)) await widget.config.update(cfg.copyWith(chaScene: (scene,)));
     final ask = askerFor(scene, cfg, widget.local);
     if (ask == null) return _say('整批画面模型不可用 · 去「模型」页设置', warn: true);
-    final counts = <int, int>{};
-    final err = await ws.startBatch(_scope, chaCaptioner(plan.roster, ask, counts),
+    final hits = <int, List<ImageEntry>>{};
+    final err = await ws.startBatch(_scope, chaCaptioner(plan.roster, ask, hits),
         title: 'CHA标注', list: list, parallel: scene?.profileId == localProfileId ? 1 : cfg.parallel);
     if (err != null) return _say(err, warn: true);
     final j = ws.lastJob;
-    if (j != null && mounted) {
-      await showChaSummary(context, roster: plan.roster, counts: counts, job: j, model: modelLabel(scene, widget.local));
+    if (j == null) return;
+    final model = modelLabel(scene, widget.local);
+    await ws.recordChaRun(j, plan.roster, hits, model);
+    if (mounted) {
+      await showChaSummary(context, roster: plan.roster, hits: hits, job: j, model: model);
     }
   }
 
@@ -201,6 +206,10 @@ class _InferTabState extends State<InferTab> {
                   ],
                 ),
         ),
+        if (ws.chaRuns.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          PopIn(child: _ChaRunsRow(ws: ws)),
+        ],
         const SizedBox(height: 14),
         AnimatedSwitcher(
           duration: Motion.of(context, Motion.sheet),
@@ -298,6 +307,46 @@ class _InferTabState extends State<InferTab> {
       ),
     );
     if (picked != null) await widget.config.update(cfg.copyWith(vision: picked));
+  }
+}
+
+/// 做过 CHA 就显示:做过几次、最近一次;点开「CHA 记录」。
+class _ChaRunsRow extends StatelessWidget {
+  const _ChaRunsRow({required this.ws});
+
+  final Workspace ws;
+
+  @override
+  Widget build(BuildContext context) {
+    final last = ws.chaRuns.last;
+    String two(int n) => '$n'.padLeft(2, '0');
+    final t = last.time;
+    return Hover(
+      cursor: SystemMouseCursors.click,
+      builder: (hover) => GestureDetector(
+        onTap: () => showChaRuns(context, ws),
+        child: NlCard(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          borderColor: hover ? NlColors.primaryBorder : null,
+          child: Row(children: [
+            Icon(Icons.groups_outlined, size: 16, color: NlColors.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('CHA 标注过 ${ws.chaRuns.length} 次', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(
+                  '最近 ${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)} · ${last.cards.map((c) => c.name).join(' / ')}',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11.5, color: NlColors.slate500),
+                ),
+              ]),
+            ),
+            Icon(Icons.chevron_right, size: 16, color: hover ? NlColors.text : NlColors.slate500),
+          ]),
+        ),
+      ),
+    );
   }
 }
 

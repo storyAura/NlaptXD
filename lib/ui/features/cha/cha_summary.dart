@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/cha.dart';
+import '../../../core/dataset.dart';
 import '../../core/theme.dart';
 import '../../core/widgets.dart';
 import '../workspace/workspace.dart';
@@ -10,7 +11,7 @@ import '../workspace/workspace.dart';
 Future<void> showChaSummary(
   BuildContext context, {
   required List<ChaCard> roster,
-  required Map<int, int> counts,
+  required Map<int, List<ImageEntry>> hits,
   required InferJob job,
   required String model,
 }) => showDialog<void>(
@@ -46,7 +47,7 @@ Future<void> showChaSummary(
                         child: Text('卡 ${i + 1} · ${c.name}${c.series.isEmpty ? '' : ' · ${c.series}'}',
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                       ),
-                      Pill('匹配 ${counts[i] ?? 0} 张', tone: PillTone.blue),
+                      Pill('匹配 ${hits[i]?.length ?? 0} 张', tone: PillTone.blue),
                       const SizedBox(width: 6),
                       NlButton(label: '复制', icon: Icons.content_copy_outlined, tone: Tone.ghost, onPressed: () => copy(c.text, '已复制卡 ${i + 1}')),
                     ]),

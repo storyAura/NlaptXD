@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/backups.dart';
 import '../../../core/captions.dart';
+import '../../../core/cha.dart';
+import '../../../core/cha_store.dart';
 import '../../../core/dataset.dart';
 import '../../../core/dataset_store.dart';
 import '../../../core/history.dart';
@@ -64,6 +66,9 @@ class Workspace extends ChangeNotifier {
   InferJob? job;
   InferJob? lastJob;
 
+  /// 这个数据集做过的 CHA 标注(旧的在前),见 [recordChaRun]。
+  List<ChaRun> chaRuns = const [];
+
   /// 给 part 里的扩展用:notifyListeners 是 protected 的。
   void changed() => notifyListeners();
 
@@ -95,6 +100,7 @@ class Workspace extends ChangeNotifier {
       if (moved > 0) debugPrint('已把 $moved 个旧数据文件从数据集搬到 ${data.path}');
       oplog = OpLog(data);
       await oplog!.load();
+      chaRuns = await loadChaRuns(data);
       onRootChanged?.call(dir.path);
     } finally {
       loading = false;
@@ -129,6 +135,7 @@ class Workspace extends ChangeNotifier {
 
   /// txt 相对数据集根目录的路径(操作日志里这样记,数据集搬家也能回滚)。
   String relPath(ImageEntry e) => e.txtPath.substring(root!.absolute.path.length + 1);
+  String relImage(ImageEntry e) => e.imagePath.substring(root!.absolute.path.length + 1);
 
   /// 已经写进 txt 的新标注:内存、磁盘副本和历史一起更新(历史要先于改动建立)。
   void _commitWritten(ImageEntry e, String text, String label) {

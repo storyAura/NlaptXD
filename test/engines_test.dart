@@ -33,18 +33,19 @@ void main() {
       final withRef = [roster[0], ChaCard.fromText('Yun', '', roster[1].text, [(path: '${tmp.path}/back.png', label: '背面')])];
       final prompts = <String>[];
       final imageCounts = <int>[];
-      final counts = <int, int>{};
+      final hits = <int, List<ImageEntry>>{};
       final run = chaCaptioner(withRef, ({required prompt, system = '', required images}) async {
         prompts.add(prompt);
         imageCounts.add(images.length);
         return 'CARD: 2\nOUTFIT 2: She wears pajamas.\n\nShe sleeps.';
-      }, counts);
-      final out = await run(image('a.png'));
+      }, hits);
+      final a = image('a.png');
+      final out = await run(a);
       expect(out, 'Yun has brown hair. She wears pajamas.\n\nShe sleeps.');
       expect(prompts.single, contains('Card 2 — name: Yun'));
       expect(prompts.single, contains('reference of card 2 (Yun) — 背面'));
       expect(imageCounts.single, 2);
-      expect(counts, {1: 1});
+      expect(hits, {1: [a]});
     });
 
     test('CARD: NONE returns null so the batch skips the image', () async {
