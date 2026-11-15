@@ -50,7 +50,7 @@ class _InferTabState extends State<InferTab> {
     final json = _engine == Engine.json;
     final ask = json ? askerFor(cfg.vision, cfg, widget.local) : null;
     final run = local
-        ? widget.local.captioner(prompt: cfg.prompt, system: cfg.system)
+        ? widget.local.captioner(prompt: cfg.captionPrompt, system: cfg.system)
         : json
         ? (ask == null ? null : jsonCaptioner(_jsonFormat, ask))
         : llmCaptioner(cfg, widget.local);
@@ -136,7 +136,7 @@ class _InferTabState extends State<InferTab> {
               key: ValueKey(_engine),
               child: switch (_engine) {
                 Engine.llm => _llmPanel(cfg.vision),
-                Engine.local => _LocalPanel(local: widget.local, prompt: cfg.prompt, onGoModels: widget.onGoModels),
+                Engine.local => _LocalPanel(local: widget.local, prompt: cfg.captionRules, onGoModels: widget.onGoModels),
                 Engine.cha => _chaPanel(),
                 Engine.json => _jsonPanel(),
                 Engine.compare => NlCard(
@@ -253,7 +253,7 @@ class _InferTabState extends State<InferTab> {
         _visionRow(vision),
         const SizedBox(height: 10),
         Label('提示词', trailing: Text('「模型」页可改', style: TextStyle(fontSize: 11, color: NlColors.slate400))),
-        Text(cfg.prompt, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: NlColors.slate700, height: 1.5)),
+        Text(cfg.captionRules, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: NlColors.slate700, height: 1.5)),
       ],
     );
   }

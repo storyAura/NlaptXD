@@ -62,7 +62,8 @@ void main() {
     expect(c.systemName, '中文');
     expect(c.system, '你是一个图像分析系统。');
     expect(c.systemNames, ['结构化视觉编译', '客观视觉报告', '中文', 'other']);
-    expect(c.prompt, defaultVisionPrompt);
+    expect(c.captionRules, '你是一个图像分析系统。');
+    expect(c.captionPrompt, captionInstruction);
     expect(c.hfToken, 'hf_fake');
     expect(c.legacyImport, legacyImportVersion);
   });
@@ -74,14 +75,21 @@ void main() {
       vision: mine,
       systemPrompts: const {'中文': 'keep me'},
       systemName: '客观视觉报告',
-      prompt: 'my prompt',
     );
-    final c = importLegacy(cur, api: _api, cha: _cha, prompts: {..._prompts, 'user_prompt': 'old user'});
+    final c = importLegacy(cur, api: _api, cha: _cha, prompts: _prompts);
     expect([for (final p in c.profiles) p.name], ['renamed', 'openrouter', 'vertex']);
     expect(c.vision, mine);
     expect(c.systemPrompts, {'中文': 'keep me', 'other': 'x'});
     expect(c.systemName, '客观视觉报告');
-    expect(c.prompt, 'my prompt');
+  });
+
+  test('no system prompt, or an empty scheme, falls back to the default instruction', () {
+    for (final c in [
+      const AppConfig(),
+      const AppConfig(systemPrompts: {'空方案': '  '}, systemName: '空方案'),
+    ]) {
+      expect((c.captionPrompt, c.captionRules), (defaultVisionPrompt, defaultVisionPrompt));
+    }
   });
 
   test('step 2 only adds the presets and gives the single imported prompt its old name back', () {

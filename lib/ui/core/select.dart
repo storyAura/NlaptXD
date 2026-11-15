@@ -130,7 +130,9 @@ class _NlSelectState<T> extends State<NlSelect<T>> with SingleTickerProviderStat
                   opacity: curved,
                   child: SizeTransition(
                     sizeFactor: Tween(begin: .6, end: 1.0).animate(curved),
-                    alignment: Alignment.topCenter,
+                    alignment: Alignment.topLeft,
+                    // 不写的话它会撑满整个窗口宽,菜单就跑到字段右边、甚至窗口外面去(踩过)。
+                    fixedCrossAxisSizeFactor: 1,
                     child: SlideTransition(
                       position: Tween(begin: const Offset(0, -.04), end: Offset.zero).animate(curved),
                       child: _list(),

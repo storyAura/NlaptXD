@@ -21,7 +21,6 @@ class AppConfig {
     this.chaScene,
     this.darkMode = false,
     this.lastRoot = '',
-    this.prompt = defaultVisionPrompt,
     this.systemPrompts = const {},
     this.systemName = '',
     this.legacyImport = 0,
@@ -44,7 +43,6 @@ class AppConfig {
 
   /// 上次打开的数据集,启动时自动重开。
   final String lastRoot;
-  final String prompt;
 
   /// 用户存的系统提示词方案(名字 → 内容,按添加顺序);和内置方案同名时用户的优先。
   final Map<String, String> systemPrompts;
@@ -71,6 +69,12 @@ class AppConfig {
   String get system => systemTextOf(systemName);
 
   String systemTextOf(String name) => systemPrompts[name] ?? builtinSystemPrompts[name] ?? '';
+
+  /// 推标随图发的那句话。没有系统提示词时默认指令就放这里,不发系统消息。
+  String get captionPrompt => system.trim().isEmpty ? defaultVisionPrompt : captionInstruction;
+
+  /// 推标实际照着做的指令(界面上显示这个)。
+  String get captionRules => system.trim().isEmpty ? defaultVisionPrompt : system;
 
   /// 能选的方案名:内置的在前,再是用户自己的。
   List<String> get systemNames => [
@@ -101,7 +105,6 @@ class AppConfig {
     (ModelRef?,)? chaScene,
     bool? darkMode,
     String? lastRoot,
-    String? prompt,
     Map<String, String>? systemPrompts,
     String? systemName,
     int? legacyImport,
@@ -116,7 +119,6 @@ class AppConfig {
     chaScene: chaScene == null ? this.chaScene : chaScene.$1,
     darkMode: darkMode ?? this.darkMode,
     lastRoot: lastRoot ?? this.lastRoot,
-    prompt: prompt ?? this.prompt,
     systemPrompts: systemPrompts ?? this.systemPrompts,
     systemName: systemName ?? this.systemName,
     legacyImport: legacyImport ?? this.legacyImport,
@@ -133,7 +135,6 @@ class AppConfig {
     'chaScene': chaScene?.toJson(),
     'darkMode': darkMode,
     'lastRoot': lastRoot,
-    'prompt': prompt,
     'systemPrompts': systemPrompts,
     'systemName': systemName,
     'legacyImport': legacyImport,
@@ -159,7 +160,6 @@ class AppConfig {
       chaScene: ModelRef.fromJson(j['chaScene']),
       darkMode: j['darkMode'] as bool? ?? false,
       lastRoot: j['lastRoot'] as String? ?? '',
-      prompt: (j['prompt'] as String?)?.trim().isNotEmpty == true ? j['prompt'] as String : defaultVisionPrompt,
       systemPrompts: prompts,
       systemName: j['systemName'] as String? ?? (prompts.isEmpty ? '' : _singleSystemName),
       legacyImport: j['legacyImport'] as int? ?? (j['legacyImported'] == true ? 1 : 0),

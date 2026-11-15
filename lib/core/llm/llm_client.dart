@@ -4,10 +4,13 @@ import 'dart:io';
 
 import 'api_profile.dart';
 
-/// 旧版 NLapt 的默认看图指令(用户提示词留空时用)。
+/// 旧版 NLapt 的默认看图指令(没有系统提示词时用)。
 const defaultVisionPrompt =
     'Describe this image in a detailed, objective natural language paragraph '
     'suitable for image-generation training. Reply with the caption text only.';
+
+/// 有系统提示词时随图发的那句话:具体怎么写全听系统提示词的。
+const captionInstruction = 'Caption this image following your instructions. Reply with the caption text only.';
 
 /// 随请求发出的一张图。
 typedef ImagePart = ({List<int> bytes, String mime});

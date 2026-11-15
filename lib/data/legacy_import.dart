@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../core/llm/api_profile.dart';
-import '../core/llm/llm_client.dart';
 import '../core/llm/translate.dart';
 import 'app_config.dart';
 
@@ -35,7 +34,7 @@ ModelRef? _ref(Object? j) {
 const legacyImportVersion = 6;
 
 /// 把旧版的 api.json(接口、推标模型)、cha_annotation.json(CHA 模型位)、vision_prompts.json
-/// (系统提示词方案、推标提示词)并进 [cur]。只做还没做过的步骤;只填空位、不覆盖已有设置。
+/// (系统提示词方案)并进 [cur]。只做还没做过的步骤;只填空位、不覆盖已有设置。
 AppConfig importLegacy(
   AppConfig cur, {
   Map<String, dynamic>? api,
@@ -109,12 +108,10 @@ AppConfig _importPrompts(AppConfig cur, Map<String, dynamic>? prompts) {
   }
   final names = cur.copyWith(systemPrompts: merged).systemNames;
   final active = prompts?['active'];
-  final user = prompts?['user_prompt'];
   return cur.copyWith(
     systemPrompts: merged,
     // 正在用的方案还在就不动;没选或被合并掉了,换成旧版选中的那套。
     systemName: names.contains(cur.systemName) ? cur.systemName : active is String && names.contains(active) ? active : '',
-    prompt: cur.prompt == defaultVisionPrompt && user is String && user.trim().isNotEmpty ? user : null,
   );
 }
 

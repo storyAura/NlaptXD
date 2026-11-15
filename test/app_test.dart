@@ -64,6 +64,30 @@ void main() {
     expect(find.text('1 人物'), findsNothing);
   });
 
+  testWidgets('models page: batch size can be stepped or typed, and only the system prompt is left', (tester) async {
+    final config = ConfigStore(home);
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(NlaptApp(config: config, ws: Workspace(dataHome: home), local: LocalStore(home), windowChrome: false));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('模型'));
+    await tester.pumpAndSettle();
+    expect(find.text('推标提示词'), findsNothing);
+
+    await tester.tap(find.byTooltip('加一张'));
+    await tester.pumpAndSettle();
+    expect(config.config.parallel, 5);
+    final field = find.widgetWithText(TextField, '5');
+    await tester.enterText(field, '12');
+    await tester.pumpAndSettle();
+    expect(config.config.parallel, 12);
+    await tester.enterText(find.widgetWithText(TextField, '12'), '99');
+    await tester.pumpAndSettle();
+    expect(config.config.parallel, 32);
+    expect(find.widgetWithText(TextField, '32'), findsOneWidget);
+  });
+
   testWidgets('without a dataset the welcome page offers to open one', (tester) async {
     await pump(tester, open: false);
     expect(find.text('打开数据集文件夹'), findsOneWidget);

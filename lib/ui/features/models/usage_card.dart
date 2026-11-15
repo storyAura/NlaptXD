@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/llm/api_profile.dart';
 import '../../../core/llm/llm_client.dart';
@@ -23,9 +24,9 @@ class UsageCard extends StatefulWidget {
 }
 
 class _UsageCardState extends State<UsageCard> {
-  late final _prompt = TextEditingController(text: widget.config.config.prompt);
   final _system = TextEditingController();
   final _name = TextEditingController();
+  late final _parallel = TextEditingController(text: '${widget.config.config.parallel}');
 
   /// 输入框正在显示哪套方案;设置里换了方案(或别处改了)就重新填。
   String? _shown;
@@ -35,10 +36,22 @@ class _UsageCardState extends State<UsageCard> {
 
   @override
   void dispose() {
-    _prompt.dispose();
     _system.dispose();
     _name.dispose();
+    _parallel.dispose();
     super.dispose();
+  }
+
+  /// 同时发送数:超出范围按边界算,框里的字跟着改。
+  void _setParallel(int n) {
+    final v = n.clamp(1, maxParallel);
+    _showParallel(v);
+    if (v != cfg.parallel) widget.config.update(cfg.copyWith(parallel: v));
+  }
+
+  void _showParallel(int v) {
+    final text = '$v';
+    if (_parallel.text != text) _parallel.value = TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
   }
 
   void _sync() {
@@ -48,8 +61,7 @@ class _UsageCardState extends State<UsageCard> {
     _name.text = cfg.systemName;
   }
 
-  bool get _dirty =>
-      _prompt.text != cfg.prompt || _system.text != cfg.system || (_custom && _name.text.trim() != cfg.systemName);
+  bool get _dirty => _system.text != cfg.system || (_custom && _name.text.trim() != cfg.systemName);
 
   void _select(String name) => widget.config.update(cfg.copyWith(systemName: name));
 
@@ -90,7 +102,7 @@ class _UsageCardState extends State<UsageCard> {
       }
     }
     _shown = name;
-    await widget.config.update(cfg.copyWith(prompt: _prompt.text, systemPrompts: prompts, systemName: name));
+    await widget.config.update(cfg.copyWith(systemPrompts: prompts, systemName: name));
     if (mounted) {
       showToast(context, '已保存');
       setState(() {});
@@ -125,29 +137,41 @@ class _UsageCardState extends State<UsageCard> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(child: Text('批量时同时发送 · 接口限流就调小', style: caption)),
+                  Expanded(child: Text('批量同时发送 1–$maxParallel 张 · 接口限流就调小', style: caption)),
+                  NlIconButton(Icons.remove, tooltip: '减一张', onPressed: cfg.parallel > 1 ? () => _setParallel(cfg.parallel - 1) : null),
+                  const SizedBox(width: 4),
                   SizedBox(
-                    width: 110,
-                    child: NlSelect<int>(
-                      value: cfg.parallel,
-                      items: [for (final n in {1, 2, 4, 8, 12, 16, 20, maxParallel, cfg.parallel}.toList()..sort()) (n, '$n 张')],
-                      onChanged: (n) => widget.config.update(cfg.copyWith(parallel: n)),
+                    width: 56,
+                    // 清空后点别处:框里回到当前值。
+                    child: Focus(
+                      onFocusChange: (on) {
+                        if (!on) _showParallel(cfg.parallel);
+                      },
+                      child: TextField(
+                        controller: _parallel,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 12.5),
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(3)],
+                        onChanged: (s) {
+                          final n = int.tryParse(s);
+                          if (n != null) _setParallel(n);
+                        },
+                        decoration: fieldDecoration(''),
+                      ),
                     ),
                   ),
+                  const SizedBox(width: 4),
+                  NlIconButton(Icons.add, tooltip: '加一张', onPressed: cfg.parallel < maxParallel ? () => _setParallel(cfg.parallel + 1) : null),
                 ],
               ),
               const SizedBox(height: 14),
-              Text('推标提示词', style: caption),
-              const SizedBox(height: 6),
-              TextField(controller: _prompt, maxLines: 5, minLines: 3, style: monoStyle, onChanged: (_) => setState(() {}), decoration: fieldDecoration('')),
-              const SizedBox(height: 14),
-              Text('系统提示词', style: caption),
+              Text('系统提示词 · 推标照它写', style: caption),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  NlChip(label: '不用', selected: cfg.systemName.isEmpty, onTap: () => _select('')),
+                  NlChip(label: '默认', selected: cfg.systemName.isEmpty, onTap: () => _select('')),
                   for (final n in cfg.systemNames) NlChip(label: n, selected: cfg.systemName == n, onTap: () => _select(n)),
                   NlButton(label: '新建', icon: Icons.add, tone: Tone.ghost, onPressed: _create),
                 ],
@@ -164,12 +188,11 @@ class _UsageCardState extends State<UsageCard> {
                 minLines: 3,
                 style: monoStyle,
                 onChanged: (_) => setState(() {}),
-                decoration: fieldDecoration(cfg.systemName.isEmpty ? '不发送系统提示词' : ''),
+                decoration: fieldDecoration(cfg.systemName.isEmpty ? defaultVisionPrompt : '').copyWith(hintMaxLines: 8),
               ),
               const SizedBox(height: 10),
               Row(
                 children: [
-                  NlButton(label: '恢复默认提示词', tone: Tone.ghost, onPressed: () => setState(() => _prompt.text = defaultVisionPrompt)),
                   if (builtinEdited) NlButton(label: '恢复内置方案', tone: Tone.ghost, onPressed: _restoreBuiltin),
                   if (_custom) NlButton(label: '删除方案', tone: Tone.ghost, onPressed: _delete),
                   const Spacer(),

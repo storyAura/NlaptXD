@@ -53,11 +53,11 @@ Translator translatorFor(AppConfig c) {
 String modelLabel(ModelRef? ref, LocalStore local) =>
     ref == null ? '未设置' : ref.profileId == localProfileId ? '本地 · ${local.picked?.name ?? '未选模型'}' : ref.model;
 
-/// 「LLM」引擎:当前视觉模型看图,用设置里的推标提示词。
+/// 「LLM」引擎:当前视觉模型看图,照当前系统提示词方案写。
 CaptionFn? llmCaptioner(AppConfig c, LocalStore local) {
   final ask = askerFor(c.vision, c, local);
   if (ask == null) return null;
-  return (ImageEntry e) async => ask(prompt: c.prompt, system: c.system, images: [await readImage(e.imagePath)]);
+  return (ImageEntry e) async => ask(prompt: c.captionPrompt, system: c.system, images: [await readImage(e.imagePath)]);
 }
 
 /// JSON 标注:视觉模型看图回草稿 JSON,按原图宽高换成 [format] 的官方 JSON。
