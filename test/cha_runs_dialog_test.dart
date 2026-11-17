@@ -10,8 +10,8 @@ void main() {
   testWidgets('opens on the newest CHA run, steps back to the older one', (tester) async {
     final ws = Workspace(dataHome: Directory.systemTemp)
       ..chaRuns = [
-        (time: DateTime(2026, 11, 15, 9), model: 'old-model', cards: [(name: 'Aoba', series: '', text: 'Aoba has purple hair.', images: <String>[])], written: 3, skipped: 0, failed: 0, cancelled: false),
-        (time: DateTime(2026, 11, 16, 9), model: 'new-model', cards: [(name: 'Yun', series: 'NG', text: 'Yun has brown hair.', images: ['a/1.png'])], written: 1, skipped: 2, failed: 0, cancelled: false),
+        (time: DateTime(2026, 11, 15, 9), model: 'old-model', cards: [(name: 'Aoba', series: '', text: 'Aoba has purple hair.', images: <String>[])], written: 3, skipped: 0, failed: 0, cancelled: false, missed: const <String>[]),
+        (time: DateTime(2026, 11, 16, 9), model: 'new-model', cards: [(name: 'Yun', series: 'NG', text: 'Yun has brown hair.', images: ['a/1.png'])], written: 1, skipped: 2, failed: 0, cancelled: false, missed: const <String>[]),
       ];
     await tester.pumpWidget(MaterialApp(
       theme: nlTheme(),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/cha_store.dart';
 import '../../../core/dataset.dart';
 import '../../../core/json_caption.dart';
 import '../../../core/llm/api_profile.dart';
@@ -78,10 +79,12 @@ class _InferTabState extends State<InferTab> {
     if (j != null) _say(j.summary, warn: j.failed > 0);
   }
 
-  Future<void> _runCha() async {
+  /// [only]:只推这些图,并直接套上上次的角色卡(重跑上一批没标上的)。
+  Future<void> _runCha({List<ImageEntry>? only}) async {
     final cfg = widget.config.config;
-    final list = ws.scopeEntries(_scope);
-    final plan = await showChaDialog(context, config: cfg, local: widget.local, images: list, root: ws.root, data: ws.dataDir);
+    final list = only ?? ws.scopeEntries(_scope);
+    final plan = await showChaDialog(context,
+        config: cfg, local: widget.local, images: list, root: ws.root, data: ws.dataDir, reuse: only != null);
     if (plan == null || !mounted) return;
     final scene = plan.scene;
     // 确认页换了整批画面模型就记进设置,下次默认用它。
@@ -208,7 +211,7 @@ class _InferTabState extends State<InferTab> {
         ),
         if (ws.chaRuns.isNotEmpty) ...[
           const SizedBox(height: 12),
-          PopIn(child: _ChaRunsRow(ws: ws)),
+          PopIn(child: _ChaRunsRow(ws: ws, onRerun: ws.job != null ? null : (missed) => _runCha(only: missed))),
         ],
         const SizedBox(height: 14),
         AnimatedSwitcher(
@@ -312,15 +315,39 @@ class _InferTabState extends State<InferTab> {
 
 /// 做过 CHA 就显示:做过几次、最近一次;点开「CHA 记录」。
 class _ChaRunsRow extends StatelessWidget {
-  const _ChaRunsRow({required this.ws});
+  const _ChaRunsRow({required this.ws, required this.onRerun});
 
   final Workspace ws;
+
+  /// 重跑最近一次没标上的图;null = 正在推标。
+  final void Function(List<ImageEntry> missed)? onRerun;
 
   @override
   Widget build(BuildContext context) {
     final last = ws.chaRuns.last;
     String two(int n) => '$n'.padLeft(2, '0');
     final t = last.time;
+    final missed = ws.chaMissed;
+    final rerun = onRerun;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _record(context, last, '${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}'),
+        if (missed.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          NlButton(
+            expand: true,
+            tone: Tone.outline,
+            icon: Icons.replay,
+            label: '重跑上一批没标上的 ${missed.length} 张',
+            onPressed: rerun == null ? null : () => rerun(missed),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _record(BuildContext context, ChaRun last, String when) {
     return Hover(
       cursor: SystemMouseCursors.click,
       builder: (hover) => GestureDetector(
@@ -336,7 +363,7 @@ class _ChaRunsRow extends StatelessWidget {
                 Text('CHA 标注过 ${ws.chaRuns.length} 次', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text(
-                  '最近 ${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)} · ${last.cards.map((c) => c.name).join(' / ')}',
+                  '最近 $when · ${last.cards.map((c) => c.name).join(' / ')}',
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 11.5, color: NlColors.slate500),
                 ),

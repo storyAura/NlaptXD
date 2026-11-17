@@ -72,16 +72,43 @@ CaptionFn jsonCaptioner(JsonFormat format, VisionAsk ask) => (ImageEntry e) asyn
 };
 
 /// CHA 逐张推标:一次请求同时判定属于哪几张卡、核对服装、写画面段。
+/// 绑定了子文件夹的卡按卡上的勾选发参考图 / 文字:单人绑定的文件夹只在绑它的卡之间判定(只绑一张就直接是它);
+/// 多人绑定的文件夹用全部卡认人,绑定的卡一定算上。其余的图用全部卡认人。
 /// [hits] 记下每张卡匹配到哪些图(给结束时的汇总和 CHA 记录用)。
 CaptionFn chaCaptioner(List<ChaCard> roster, VisionAsk ask, Map<int, List<ImageEntry>> hits) {
-  final prompt = buildScenePrompt(roster);
-  final refPaths = rosterReferencePaths(roster);
+  final everyone = [for (var i = 0; i < roster.length; i++) i];
+  ({List<int> idx, List<ChaCard> cards, List<int> known, String prompt, List<String> refs}) group(
+    List<int> idx, {
+    Set<int> bound = const {},
+    bool solo = false,
+  }) {
+    final cards = [for (final i in idx) bound.contains(i) ? boundCard(roster[i]) : roster[i]];
+    final known = solo ? const <int>[] : [for (final (k, i) in idx.indexed) if (bound.contains(i)) k];
+    return (
+      idx: idx,
+      cards: cards,
+      known: known,
+      prompt: buildScenePrompt(cards, bound: solo, known: known),
+      refs: rosterReferencePaths(cards),
+    );
+  }
+
+  final all = group(everyone);
+  final byFolder = <String, ({List<int> idx, List<ChaCard> cards, List<int> known, String prompt, List<String> refs})>{};
+  for (final f in {for (final c in roster) ?c.bind?.folder}) {
+    final bound = [for (final (i, c) in roster.indexed) if (c.bind?.folder == f) i];
+    // 绑这个文件夹的卡全是单人才跳过认人;有一张是多人就用全部卡认。
+    byFolder[f] = bound.every((i) => roster[i].bind!.solo)
+        ? group(bound, bound: bound.toSet(), solo: true)
+        : group(everyone, bound: bound.toSet());
+  }
   return (ImageEntry e) async {
-    final images = [await readImage(e.imagePath), for (final p in refPaths) await readImage(p)];
-    final verdict = parseReply(await ask(prompt: prompt, images: images), roster.length);
-    final caption = assembleCaption(roster, verdict);
-    for (final i in verdict.matched) {
-      (hits[i] ??= []).add(e);
+    final g = byFolder[e.folder] ?? all;
+    final images = [await readImage(e.imagePath), for (final p in g.refs) await readImage(p)];
+    final verdict = withKnown(parseReply(await ask(prompt: g.prompt, images: images), g.cards.length), g.known);
+    final caption = assembleCaption(g.cards, verdict);
+    for (final k in verdict.matched) {
+      (hits[g.idx[k]] ??= []).add(e);
     }
     return caption;
   };

@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nlaptxd/core/cha.dart';
+import 'package:nlaptxd/core/cha_store.dart';
 import 'package:nlaptxd/core/dataset.dart';
 import 'package:nlaptxd/core/text_ops.dart';
 import 'package:nlaptxd/ui/features/workspace/workspace.dart';
@@ -110,6 +112,18 @@ void main() {
     expect(txt('a/1.txt'), 'violet hair, solo');
     expect(ws.lastJob!.skipped.map((e) => e.name), ['1.png']);
     expect(ws.oplog!.records.single.detail, contains('跳过 1'));
+  });
+
+  test('a CHA run records skipped and failed images so they can be re-run', () async {
+    // 1.png 没认出角色(null),2.png 失败,3.png 写上。
+    await ws.startBatch(Scope.all, (e) async => switch (e.name) {
+      '1.png' => null,
+      '2.png' => throw Exception('refused'),
+      _ => 'ok',
+    }, retryDelay: Duration.zero);
+    await ws.recordChaRun(ws.lastJob!, [ChaCard.fromText('Si', '', 'Si has green hair.')], const {}, 'm');
+    expect(ws.chaMissed.map((e) => e.name), ['1.png', '2.png']);
+    expect((await loadChaRuns(ws.dataDir!)).single.missed, ws.chaRuns.single.missed);
   });
 
   test('parallel batch runs several calls at once and still writes every caption', () async {

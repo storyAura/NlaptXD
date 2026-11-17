@@ -5,7 +5,8 @@ import 'cha_prompts.dart';
 /// CHA 标注(组合分层推标):先给每个角色定一张人物卡,再逐张图判定属于哪几张卡、
 /// 核对服装,写成「人物卡 + 空行 + 画面段」。移植自旧版 NLapt 的 nlapt_gui/layered_prompts.py。
 
-const maxCards = 8;
+// ponytail: 卡多了逐张判定容易认错、每次请求带的部件图也变多;多人混合文件夹才需要这么多。
+const maxCards = 20;
 
 class ChaReplyError implements Exception {
   const ChaReplyError(this.message);
@@ -22,14 +23,28 @@ typedef CardParts = ({String appearance, String outfit});
 /// 一张额外参考图(背面、武器、发饰特写……)和它拍的是什么。
 typedef ChaReference = ({String path, String label});
 
+/// 卡绑定的子文件夹('' = 数据集根目录):那里的每张图都有这个角色。
+/// [solo] 单人:文件夹里只有她,不认人直接用这张卡;否则是多人:一定算上她,其他人照常用全部卡认。
+/// [refs] / [text]:推那里的图时要不要随图发这张卡的参考图(主参考图 + 部件)/ 人物卡文字(核对服装、删看不见的细节用)。
+typedef ChaBinding = ({String folder, bool solo, bool refs, bool text});
+
 /// 锁定的一张人物卡。
 @immutable
 class ChaCard {
-  const ChaCard({required this.name, required this.series, required this.text, required this.parts, this.references = const []});
+  const ChaCard({
+    required this.name,
+    required this.series,
+    required this.text,
+    required this.parts,
+    this.references = const [],
+    this.ref = '',
+    this.bind,
+  });
 
-  factory ChaCard.fromText(String name, String series, String text, [List<ChaReference> references = const []]) {
+  factory ChaCard.fromText(String name, String series, String text,
+      [List<ChaReference> references = const [], String ref = '', ChaBinding? bind]) {
     final t = text.trim();
-    return ChaCard(name: name.trim(), series: series.trim(), text: t, parts: splitCard(t, name), references: references);
+    return ChaCard(name: name.trim(), series: series.trim(), text: t, parts: splitCard(t, name), references: references, ref: ref, bind: bind);
   }
 
   final String name;
@@ -37,7 +52,34 @@ class ChaCard {
   final String text;
   final CardParts parts;
   final List<ChaReference> references;
+
+  /// 主参考图(只在绑定文件夹且勾了发参考图时随图发)。
+  final String ref;
+  final ChaBinding? bind;
 }
+
+/// 推绑定文件夹的图时实际发的卡:不发文字就只留名字(外貌、服装都不给,拼回时用完整的卡);
+/// 发参考图时主参考图排在部件前面。
+ChaCard boundCard(ChaCard c) {
+  final b = c.bind;
+  return ChaCard(
+    name: c.name,
+    series: c.series,
+    text: c.text,
+    parts: b == null || b.text ? c.parts : (appearance: '', outfit: ''),
+    references: b == null || b.refs ? [if (c.ref.isNotEmpty) (path: c.ref, label: 'main reference'), ...c.references] : const [],
+    ref: c.ref,
+    bind: b,
+  );
+}
+
+/// 单人绑定文件夹的图:已知就是上面的卡,不许回 NONE。
+const sceneBoundNote = 'This image comes from a folder that holds only the card(s) above: the figure in it is one of them. '
+    'Match it to the closest card; never answer CARD: NONE.';
+
+/// 多人绑定文件夹的图:这几张卡一定在,其他人照常认。
+const sceneKnownNote = 'This image comes from a folder where every image shows {KNOWN}: always include {CARDS} in the CARD line. '
+    'Other figures may also appear — match them to the other cards as usual, or leave them unmatched.';
 
 /// 一张图的判定:匹配到的卡(0 起的序号,升序;空 = NONE)、每张卡的服装(null = SAME)、
 /// 每张卡按这张图删掉看不见细节后的写法(null = ALL / 没给)、画面段。
@@ -76,7 +118,9 @@ String buildCardPrompt(String name, String series, {int variant = 0, List<String
 }
 
 /// 逐张推标的提示词:列出每张卡的外貌和官方服装;卡带参考图时,说明第 2 张起各是谁的参考。
-String buildScenePrompt(List<ChaCard> roster) {
+/// [bound]:单人绑定文件夹的图(加 [sceneBoundNote]);[known]:多人绑定文件夹里一定在的卡(0 起的序号,加 [sceneKnownNote])。
+/// 卡都没给文字时不要求删看不见的细节。
+String buildScenePrompt(List<ChaCard> roster, {bool bound = false, List<int> known = const []}) {
   final lines = [
     for (final (i, c) in roster.indexed)
       'Card ${i + 1} — name: ${c.name}; appearance: "${_oneLine(c.parts.appearance)}"; '
@@ -88,7 +132,17 @@ String buildScenePrompt(List<ChaCard> roster) {
     for (final (i, c) in roster.indexed)
       for (final r in c.references) (card: i + 1, name: c.name, label: r.label),
   ];
-  final withVisible = '${prompt.trimRight()}\n\n$sceneVisibilityNote';
+  final textless = roster.every((c) => c.parts.appearance.isEmpty && c.parts.outfit.isEmpty);
+  final withVisible = [
+    prompt.trimRight(),
+    if (!textless) sceneVisibilityNote,
+    if (bound) sceneBoundNote,
+    if (known.isNotEmpty)
+      _fill(sceneKnownNote, {
+        'KNOWN': [for (final i in known) roster[i].name].join(' and '),
+        'CARDS': [for (final i in known) 'card ${i + 1}'].join(' and '),
+      }),
+  ].join('\n\n');
   if (refs.isEmpty) return withVisible;
   final refLines = [
     for (final (k, r) in refs.indexed) '- Image ${k + 2}: reference of card ${r.card} (${r.name}) — ${_label(r.label)}',
@@ -196,6 +250,23 @@ ChaVerdict parseReply(String text, int rosterSize) {
   );
 }
 
+/// 多人绑定文件夹:模型漏掉一定在的卡时补上(服装、可见细节按原卡)。
+ChaVerdict withKnown(ChaVerdict v, List<int> known) {
+  final missing = [for (final i in known) if (!v.matched.contains(i)) i];
+  if (missing.isEmpty) return v;
+  final all = <int, (String?, String?)>{
+    for (final (k, i) in v.matched.indexed) i: (v.outfits.elementAtOrNull(k), v.visible.elementAtOrNull(k)),
+    for (final i in missing) i: (null, null),
+  };
+  final order = all.keys.toList()..sort();
+  return (
+    matched: order,
+    outfits: [for (final i in order) all[i]!.$1],
+    visible: [for (final i in order) all[i]!.$2],
+    scene: v.scene,
+  );
+}
+
 /// 匹配到的卡 + 空行 + 画面段;NONE 时为 null(这张图不写)。每张卡优先用按这张图删掉看不见细节的写法,
 /// 其次是外貌 + 改写的服装,否则原样。
 String? assembleCaption(List<ChaCard> roster, ChaVerdict v) {
@@ -218,7 +289,8 @@ String? assembleCaption(List<ChaCard> roster, ChaVerdict v) {
 /// 不能短到只剩名字,也不能比原卡长出一截(那是加了东西)。不满足就用完整的卡。
 bool trimmedCardOk(ChaCard card, String? trimmed) {
   final t = trimmed?.trim() ?? '';
-  if (t.isEmpty || card.name.isEmpty) return false;
+  // 卡文没发给模型(绑定文件夹不发文字),它写的删减版是编的。
+  if (t.isEmpty || card.name.isEmpty || card.parts.appearance.isEmpty) return false;
   if (!t.toLowerCase().startsWith(card.name.toLowerCase())) return false;
   return t.length >= card.name.length + 30 && t.length <= card.text.length * 1.15 + 40;
 }

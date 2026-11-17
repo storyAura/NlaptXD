@@ -79,6 +79,44 @@ void main() {
     expect(find.text('主参考图'), findsOneWidget, reason: '选完退回主参考图');
   });
 
+  testWidgets('the grid shows one subfolder at a time', (tester) async {
+    final last = images.removeLast();
+    images.add(ImageEntry(imagePath: last.imagePath, txtPath: last.txtPath, folder: 'b'));
+    await open(tester);
+    expect(find.byType(Image), findsNWidgets(2), reason: '先看根目录的两张');
+    await tester.tap(find.text('根目录 · 2'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('b · 1').last);
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('edits are kept as a draft; after a crash the next open offers to continue', (tester) async {
+    await open(tester);
+    await tester.enterText(find.byType(TextField).first, 'Alisa');
+    await tester.pump(const Duration(seconds: 1));
+    // 存草稿是真写盘:给它真实时间写完。
+    final file = File('${root.path}${Platform.pathSeparator}cha_drafts.json');
+    for (var i = 0; i < 20 && !file.existsSync(); i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    }
+    expect(file.readAsStringSync(), contains('Alisa'));
+
+    // 「突然关机」:直接拆掉整个界面,再重新打开。
+    await tester.pumpWidget(const SizedBox());
+    await open(tester);
+    for (var i = 0; i < 20 && find.textContaining('没做完的角色卡').evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump();
+    }
+    expect(find.textContaining('没做完的角色卡 · Alisa'), findsOneWidget);
+    await tester.tap(find.text('继续编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('卡 1 · Alisa'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets(
     'cards saved last time can be reused and go straight to confirm',
     (tester) async {
@@ -90,6 +128,7 @@ void main() {
             text: 'Si from Arknights has green hair. She wears a white dress.',
             ref: images[2].imagePath,
             references: const [],
+            bind: null,
           ),
         ]),
       );

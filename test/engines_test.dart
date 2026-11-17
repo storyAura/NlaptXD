@@ -7,6 +7,7 @@ import 'package:nlaptxd/core/cha.dart';
 import 'package:nlaptxd/core/dataset.dart';
 import 'package:nlaptxd/core/json_caption.dart';
 import 'package:nlaptxd/core/llm/api_profile.dart';
+import 'package:nlaptxd/core/llm/llm_client.dart';
 import 'package:nlaptxd/core/local/caption_catalog.dart';
 import 'package:nlaptxd/data/app_config.dart';
 import 'package:nlaptxd/ui/features/local/local_store.dart';
@@ -46,6 +47,58 @@ void main() {
       expect(prompts.single, contains('reference of card 2 (Yun) — 背面'));
       expect(imageCounts.single, 2);
       expect(hits, {1: [a]});
+    });
+
+    test('a bound folder skips identification; the checkboxes decide refs and card text', () async {
+      File('${tmp.path}/main.png').writeAsBytesSync([9]);
+      File('${tmp.path}/back.png').writeAsBytesSync([9]);
+      ChaCard yun(ChaBinding b) => ChaCard.fromText('Yun', '', roster[1].text, [(path: '${tmp.path}/back.png', label: 'back')], '${tmp.path}/main.png', b);
+      final calls = <({String prompt, int images})>[];
+      final hits = <int, List<ImageEntry>>{};
+      Future<String> ask({required String prompt, String system = '', required List<ImagePart> images}) async {
+        calls.add((prompt: prompt, images: images.length));
+        return 'CARD: 1\nOUTFIT 1: SAME\nVISIBLE 1: Yun has brown hair and an invented hat that is not on the card.\n\nShe waves.';
+      }
+
+      ImageEntry inFolder(String name, String folder) {
+        final e = image(name);
+        return ImageEntry(imagePath: e.imagePath, txtPath: e.txtPath, folder: folder);
+      }
+
+      // 绑 yun/,两样都发:只给 Yun 一张卡,主参考图 + 部件都随图发。
+      final full = chaCaptioner([roster[0], yun((folder: 'yun', solo: true, refs: true, text: true))], ask, hits);
+      final y = inFolder('y.png', 'yun');
+      await full(y);
+      expect(calls.last.prompt, contains('Card 1 — name: Yun'));
+      expect(calls.last.prompt, isNot(contains('Aoba')));
+      expect(calls.last.prompt, contains(sceneBoundNote));
+      expect(calls.last.images, 3);
+      expect(hits, {1: [y]}, reason: '记回原来的第 2 张卡');
+
+      // 不发图也不发文字:只给名字,模型编的删减版不要,拼回完整的卡。
+      final bare = chaCaptioner([roster[0], yun((folder: 'yun', solo: true, refs: false, text: false))], ask, {});
+      expect(await bare(inFolder('z.png', 'yun')), '${roster[1].text}\n\nShe waves.');
+      expect(calls.last.images, 1);
+      expect(calls.last.prompt, isNot(contains('brown hair')));
+
+      // 不在绑定文件夹的图照常用全部卡认人。
+      await full(inFolder('m.png', 'mix'));
+      expect(calls.last.prompt, allOf(contains('Aoba'), contains('Yun'), isNot(contains(sceneBoundNote))));
+    });
+
+    test('a multi binding keeps every card in play but always counts the bound one', () async {
+      final yun = ChaCard.fromText('Yun', '', roster[1].text, const [], '', (folder: 'yun', solo: false, refs: true, text: true));
+      final prompts = <String>[];
+      final hits = <int, List<ImageEntry>>{};
+      // 模型只认出 Aoba,漏了一定在的 Yun:补上,用完整的卡。
+      final run = chaCaptioner([roster[0], yun], ({required prompt, system = '', required images}) async {
+        prompts.add(prompt);
+        return 'CARD: 1\nOUTFIT 1: SAME\n\nTwo girls talk.';
+      }, hits);
+      final e = ImageEntry(imagePath: image('g.png').imagePath, txtPath: '', folder: 'yun');
+      expect(await run(e), '${roster[0].text}\n\n${roster[1].text}\n\nTwo girls talk.');
+      expect(prompts.single, allOf(contains('Aoba'), contains('always include card 2'), isNot(contains(sceneBoundNote))));
+      expect(hits.keys, [0, 1]);
     });
 
     test('CARD: NONE returns null so the batch skips the image', () async {

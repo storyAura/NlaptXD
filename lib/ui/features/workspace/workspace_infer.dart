@@ -199,11 +199,18 @@ extension WorkspaceInfer on Workspace {
         skipped: j.skipped.length,
         failed: j.failed,
         cancelled: j.cancelled,
+        missed: [for (final e in j.list) if (!j.changes.containsKey(e)) relImage(e)],
       ));
       changed();
     } on Object catch (err) {
       debugPrint('记 CHA 标注失败:$err');
     }
+  }
+
+  /// 最近一次 CHA 里没标上、现在还在数据集里的图(按数据集顺序)。
+  List<ImageEntry> get chaMissed {
+    final missed = chaRuns.lastOrNull?.missed.toSet() ?? const <String>{};
+    return [for (final e in entries) if (missed.contains(relImage(e))) e];
   }
 
   void cancelJob() {
